@@ -11,6 +11,8 @@ import (
 	"github.com/Aryan9inja/RookDB/internal/operation"
 )
 
+const MaxRecordSize = 512
+
 // WAL manages the open WAL file.
 type WAL struct {
 	file *os.File
@@ -66,6 +68,10 @@ func Append(wal *WAL, op operation.Operation) (bool, error) {
 
 	// Create length + payload + checksum
 	buffer = append(buffer, chBuff...)
+
+	if len(buffer) > MaxRecordSize {
+		return false, errors.New("large payload error")
+	}
 
 	// Write the buffer to disk
 	n, err := wal.file.Write(buffer)
