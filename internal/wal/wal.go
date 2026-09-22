@@ -3,10 +3,14 @@ package wal
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/Aryan9inja/RookDB/internal/operation"
 )
@@ -85,6 +89,81 @@ func Append(wal *WAL, op operation.Operation) (bool, error) {
 	// Sync to ensure durability
 	if err := wal.file.Sync(); err != nil {
 		return false, fmt.Errorf("sync write WAL: %w", err)
+	}
+
+	return true, nil
+}
+
+func Recover(wal *WAL) (bool, error) {
+	var truncateOffset int64 = -1
+
+	for {
+		currOffset, err := wal.file.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return false, fmt.Errorf("recover: offset seeking: %w", err)
+		}
+
+		lengthBuffer := make([]byte, 4)
+
+		_, err = io.ReadFull(wal.file, lengthBuffer)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			} else if errors.Is(err, io.ErrUnexpectedEOF) {
+				log.Println("recover: read error: length: ", err)
+				truncateOffset = currOffset
+				break
+			} else {
+				return false, fmt.Errorf("recover: read error: length: %w", err)
+			}
+		}
+
+		length := binary.BigEndian.Uint32(lengthBuffer)
+		if 8+length > MaxRecordSize {
+			log.Println("recover: max record size exceeded")
+			truncateOffset = currOffset
+			break
+		}
+
+		payloadBuffer := make([]byte, length)
+		_, err = io.ReadFull(wal.file, payloadBuffer)
+		if err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				log.Println("recover: read error: payload: ", err)
+				truncateOffset = currOffset
+				break
+			} else {
+				return false, fmt.Errorf("recover: read error: payload: %w", err)
+			}
+		}
+
+		checksumBuffer := make([]byte, 4)
+		_, err = io.ReadFull(wal.file, checksumBuffer)
+		if err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				log.Println("recover: read error: checksum: ", err)
+				truncateOffset = currOffset
+				break
+			} else {
+				return false, fmt.Errorf("recover: read error: checksum: %w", err)
+			}
+		}
+
+		// length buffer work is done as we extracted length so reusing it
+		lengthBuffer = append(lengthBuffer, payloadBuffer...)
+		verifier := crc32.ChecksumIEEE(lengthBuffer)
+		verifierBuff := make([]byte, 4)
+		binary.BigEndian.PutUint32(verifierBuff, verifier)
+
+		if !slices.Equal(checksumBuffer, verifierBuff) {
+			log.Println("recover: checksum mismatch")
+			truncateOffset = currOffset
+			break
+		}
+	}
+
+	if truncateOffset != -1 {
+
 	}
 
 	return true, nil
