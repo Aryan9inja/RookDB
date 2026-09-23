@@ -1,0 +1,19 @@
+
+		{
+			name: "incomplete length",
+		},
+		{
+			name: "excessive length",
+		},
+		{
+			name: "incomplete payload",
+		},
+		{
+			name: "incomplete checksum",
+		},
+		{
+			name: "checksum mismatch",
+		},
+		{
+			name: "invalid json",
+		},
