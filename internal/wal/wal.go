@@ -160,10 +160,24 @@ func Recover(wal *WAL) (bool, error) {
 			truncateOffset = currOffset
 			break
 		}
+
+		// Currently operation lifecycly is not clear
+		// TODO : Forward the generated operation to db engine
+		var op operation.Operation
+		if err := json.Unmarshal(payloadBuffer, &op); err != nil {
+			log.Println("recover: json unmarshal: ", err)
+			truncateOffset = currOffset
+			break
+		}
 	}
 
 	if truncateOffset != -1 {
-
+		if err := wal.file.Truncate(truncateOffset); err != nil {
+			return false, fmt.Errorf("recover: wal truncate: %w", err)
+		}
+		if _, err := wal.file.Seek(truncateOffset, io.SeekStart); err != nil {
+			return false, fmt.Errorf("recover: seek after truncate: %w", err)
+		}
 	}
 
 	return true, nil
