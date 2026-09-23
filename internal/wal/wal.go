@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"slices"
@@ -40,6 +39,14 @@ func NewWAL(path string) (*WAL, error) {
 	fd, err := os.OpenFile(absPath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0640)
 	if err != nil {
 		return nil, fmt.Errorf("open WAL: %w", err)
+	}
+
+	// Seek cursor position to start of file
+	// This is used to recover cleanly
+	// Invariant: a newly created WAL starts with its cursor at offset 0.
+	if _, err := fd.Seek(0, io.SeekStart); err != nil {
+		fd.Close()
+		return nil, fmt.Errorf("seek WAL: %w", err)
 	}
 
 	return &WAL{file: fd}, nil
@@ -94,91 +101,92 @@ func Append(wal *WAL, op operation.Operation) (bool, error) {
 	return true, nil
 }
 
-func Recover(wal *WAL) (bool, error) {
-	var truncateOffset int64 = -1
+func Next(wal *WAL) (*operation.Operation, error) {
+	currOffset, err := wal.file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return nil, fmt.Errorf("recover: offset seeking: %w", err)
+	}
 
-	for {
-		currOffset, err := wal.file.Seek(0, io.SeekCurrent)
-		if err != nil {
-			return false, fmt.Errorf("recover: offset seeking: %w", err)
-		}
+	lengthBuffer := make([]byte, 4)
 
-		lengthBuffer := make([]byte, 4)
-
-		_, err = io.ReadFull(wal.file, lengthBuffer)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			} else if errors.Is(err, io.ErrUnexpectedEOF) {
-				log.Println("recover: read error: length: ", err)
-				truncateOffset = currOffset
-				break
-			} else {
-				return false, fmt.Errorf("recover: read error: length: %w", err)
+	_, err = io.ReadFull(wal.file, lengthBuffer)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, io.EOF
+		} else if errors.Is(err, io.ErrUnexpectedEOF) {
+			if err := truncateWAL(wal, currOffset); err != nil {
+				return nil, err
 			}
-		}
-
-		length := binary.BigEndian.Uint32(lengthBuffer)
-		if 8+length > MaxRecordSize {
-			log.Println("recover: max record size exceeded")
-			truncateOffset = currOffset
-			break
-		}
-
-		payloadBuffer := make([]byte, length)
-		_, err = io.ReadFull(wal.file, payloadBuffer)
-		if err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				log.Println("recover: read error: payload: ", err)
-				truncateOffset = currOffset
-				break
-			} else {
-				return false, fmt.Errorf("recover: read error: payload: %w", err)
-			}
-		}
-
-		checksumBuffer := make([]byte, 4)
-		_, err = io.ReadFull(wal.file, checksumBuffer)
-		if err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				log.Println("recover: read error: checksum: ", err)
-				truncateOffset = currOffset
-				break
-			} else {
-				return false, fmt.Errorf("recover: read error: checksum: %w", err)
-			}
-		}
-
-		// length buffer work is done as we extracted length so reusing it
-		lengthBuffer = append(lengthBuffer, payloadBuffer...)
-		verifier := crc32.ChecksumIEEE(lengthBuffer)
-		verifierBuff := make([]byte, 4)
-		binary.BigEndian.PutUint32(verifierBuff, verifier)
-
-		if !slices.Equal(checksumBuffer, verifierBuff) {
-			log.Println("recover: checksum mismatch")
-			truncateOffset = currOffset
-			break
-		}
-
-		// Currently operation lifecycly is not clear
-		// TODO : Forward the generated operation to db engine
-		var op operation.Operation
-		if err := json.Unmarshal(payloadBuffer, &op); err != nil {
-			log.Println("recover: json unmarshal: ", err)
-			truncateOffset = currOffset
-			break
+			return nil, fmt.Errorf("recover: read error: length: %w", err)
+		} else {
+			return nil, fmt.Errorf("recover: read error: length: %w", err)
 		}
 	}
 
-	if truncateOffset != -1 {
-		if err := wal.file.Truncate(truncateOffset); err != nil {
-			return false, fmt.Errorf("recover: wal truncate: %w", err)
+	length := binary.BigEndian.Uint32(lengthBuffer)
+	if length > MaxRecordSize-8 {
+		if err := truncateWAL(wal, currOffset); err != nil {
+			return nil, err
 		}
-		if _, err := wal.file.Seek(truncateOffset, io.SeekStart); err != nil {
-			return false, fmt.Errorf("recover: seek after truncate: %w", err)
+		return nil, errors.New("recover: max record size exceeded")
+	}
+
+	payloadBuffer := make([]byte, length)
+	_, err = io.ReadFull(wal.file, payloadBuffer)
+	if err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			if err := truncateWAL(wal, currOffset); err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("recover: read error: payload: %w", err)
+		} else {
+			return nil, fmt.Errorf("recover: read error: payload: %w", err)
 		}
 	}
 
-	return true, nil
+	checksumBuffer := make([]byte, 4)
+	_, err = io.ReadFull(wal.file, checksumBuffer)
+	if err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			if err := truncateWAL(wal, currOffset); err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("recover: read error: checksum: %w", err)
+		} else {
+			return nil, fmt.Errorf("recover: read error: checksum: %w", err)
+		}
+	}
+
+	// length buffer work is done as we extracted length so reusing it
+	lengthBuffer = append(lengthBuffer, payloadBuffer...)
+	verifier := crc32.ChecksumIEEE(lengthBuffer)
+	verifierBuff := make([]byte, 4)
+	binary.BigEndian.PutUint32(verifierBuff, verifier)
+
+	if !slices.Equal(checksumBuffer, verifierBuff) {
+		if err := truncateWAL(wal, currOffset); err != nil {
+			return nil, err
+		}
+		return nil, errors.New("recover: checksum mismatch")
+	}
+
+	var op operation.Operation
+	if err := json.Unmarshal(payloadBuffer, &op); err != nil {
+		if err := truncateWAL(wal, currOffset); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("recover: json unmarshal: %w", err)
+	}
+
+	return &op, nil
+}
+
+func truncateWAL(wal *WAL, truncateOffset int64) error {
+	if err := wal.file.Truncate(truncateOffset); err != nil {
+		return fmt.Errorf("recover: wal truncate: %w", err)
+	}
+	if _, err := wal.file.Seek(truncateOffset, io.SeekStart); err != nil {
+		return fmt.Errorf("recover: seek after truncate: %w", err)
+	}
+	return nil
 }
