@@ -1,7 +1,9 @@
 package wal
 
 import (
+	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -91,6 +93,37 @@ func TestWAL(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("incomplete length", func(t *testing.T) {
+		wal, path := newTestWAL(t)
+
+		incompleteLength := []byte{0x01, 0x02, 0x03}
+		writeRawWAL(t, path, incompleteLength)
+
+		wal2 := reopenTestWAL(t, wal, path)
+		defer wal2.Close()
+
+		_, err := Next(wal2)
+		if !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("wal test: incomplete length: expected: %v, got %v", io.ErrUnexpectedEOF, err)
+		}
+
+		// Check file size after truncate
+		// Should be zero
+		info, err := wal2.file.Stat()
+		if err != nil {
+			t.Fatalf("wal test: incomplete length: stat WAL: %v", err)
+		}
+
+		if info.Size() != 0 {
+			t.Fatalf("wal test: incomplete length: expected file size to be 0 after truncate, got: %d", info.Size())
+		}
+
+		_, err = Next(wal2)
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("wal test: incomplete length: expected: %v, got %v", io.EOF, err)
+		}
+	})
 }
 
 func newTestWAL(t *testing.T) (*WAL, string) {
@@ -120,4 +153,27 @@ func reopenTestWAL(t *testing.T, wal *WAL, path string) *WAL {
 	}
 
 	return wal
+}
+
+func writeRawWAL(t *testing.T, path string, raw []byte) {
+	t.Helper()
+
+	fd, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("write raw WAL: %v", err)
+	}
+	defer fd.Close()
+
+	n, err := fd.Write(raw)
+	if err != nil {
+		t.Fatalf("write raw WAL: %v", err)
+	}
+
+	if n != len(raw) {
+		t.Fatalf("write raw WAL: short write: wrote %d of %d bytes", n, len(raw))
+	}
+
+	if err := fd.Sync(); err != nil {
+		t.Fatalf("sync write WAL: %v", err)
+	}
 }
