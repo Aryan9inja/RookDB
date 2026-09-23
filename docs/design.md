@@ -90,18 +90,28 @@ The storage engine should only need to work with `Operation` values.
 ## WAL API
 
 For the initial version, the WAL exposes two primary operations:
+* Invariant: a newly created WAL starts with its cursor at offset 0.
 
 ```
 Append(Operation)
 
-Recover()
+Next()
 ```
 
 `Append` persists a single database operation.
 
-`Recover` sequentially scans the WAL and returns the valid operations that can be replayed by the storage engine.
+`Next` sequentially reads and validates the next WAL record and returns
+the reconstructed Operation.
 
-Operations such as `Truncate` are intentionally not exposed as part of the public WAL API. Tail truncation is considered an internal recovery mechanism rather than a responsibility of the storage engine.
+The storage engine drives recovery by repeatedly calling `Next()` until
+the WAL reaches the end of its valid history.
+
+This keeps recovery streaming rather than requiring the WAL to load
+the entire history into memory.
+
+Operations such as `Truncate` are intentionally not exposed as part of
+the public WAL API. Tail truncation is considered an internal recovery
+mechanism rather than a responsibility of the storage engine.
 
 ---
 
@@ -207,11 +217,11 @@ Verify CRC32(LENGTH + PAYLOAD)
     ↓
 Deserialize PAYLOAD
     ↓
-Validate Operation
+Return Operation
     ↓
-Return recovered Operation
+Storage Engine validates/applies Operation
     ↓
-Repeat
+Next()
 ```
 
 Recovery stops at the first invalid or incomplete record.
@@ -233,7 +243,7 @@ The WAL follows these invariants during recovery:
 * The complete checksum must be readable.
 * CRC32 must match `LENGTH + PAYLOAD`.
 * The payload must deserialize successfully.
-* The resulting operation must be valid.
+* The payload must deserialize successfully into an Operation.
 * Recovery stops at the first invalid or incomplete record.
 * The invalid tail is truncated.
 * Valid records before the invalid tail are retained.
