@@ -53,6 +53,15 @@ func NewWAL(path string) (*WAL, error) {
 	// TODO : After WAL lifecycle is clear, we need a close call on fd
 }
 
+// The caller is responsible for closing the WAL.
+func (w *WAL) Close() error {
+	if err := w.file.Close(); err != nil {
+		return fmt.Errorf("wal close: %w", err)
+	}
+
+	return nil
+}
+
 // Used to append operations into wal file.
 // Internally does serialization and checksum generation.
 func Append(wal *WAL, op operation.Operation) (bool, error) {
