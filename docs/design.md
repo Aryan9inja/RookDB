@@ -275,3 +275,17 @@ Reconstructed Database State
 ```
 
 This separation allows the WAL to remain independent of how the database stores its current in-memory state.
+
+An operation can be structurally valid but semantically invalid.
+
+For example, the WAL may contain valid JSON that decodes successfully into an
+Operation, but whose operation type is not supported by the current RookDB
+version.
+
+Semantic validation belongs to the storage engine rather than the WAL. However,
+during recovery, an operation that cannot be accepted by the current database
+version is treated as an invalid WAL record. Recovery stops at that record and
+the WAL is truncated from its starting offset.
+
+This ensures that RookDB does not skip an operation it cannot interpret and then
+continue replaying later operations as though the database history were intact.
