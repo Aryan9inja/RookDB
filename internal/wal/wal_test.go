@@ -108,21 +108,27 @@ func TestWAL(t *testing.T) {
 			t.Fatalf("wal test: incomplete length: expected: %v, got %v", io.ErrUnexpectedEOF, err)
 		}
 
-		// Check file size after truncate
-		// Should be zero
-		info, err := wal2.file.Stat()
-		if err != nil {
-			t.Fatalf("wal test: incomplete length: stat WAL: %v", err)
+		afterTruncateCheck(t, wal2)
+	})
+
+	t.Run("excessive length", func(t *testing.T) {
+		expectedError := "recover: max record size exceeded"
+
+		wal, path := newTestWAL(t)
+
+		// 513 bytes > MaxRecordSize
+		excessiveLength := []byte{0x00, 0x00, 0x02, 0x01}
+		writeRawWAL(t, path, excessiveLength)
+
+		wal2 := reopenTestWAL(t, wal, path)
+		defer wal2.Close()
+
+		_, err := Next(wal2)
+		if err == nil || err.Error() != expectedError {
+			t.Fatalf("wal test: excessive length: expected error to be: %v, got: %v", expectedError, err)
 		}
 
-		if info.Size() != 0 {
-			t.Fatalf("wal test: incomplete length: expected file size to be 0 after truncate, got: %d", info.Size())
-		}
-
-		_, err = Next(wal2)
-		if !errors.Is(err, io.EOF) {
-			t.Fatalf("wal test: incomplete length: expected: %v, got %v", io.EOF, err)
-		}
+		afterTruncateCheck(t, wal2)
 	})
 }
 
@@ -175,5 +181,25 @@ func writeRawWAL(t *testing.T, path string, raw []byte) {
 
 	if err := fd.Sync(); err != nil {
 		t.Fatalf("sync write WAL: %v", err)
+	}
+}
+
+func afterTruncateCheck(t *testing.T, wal *WAL) {
+	t.Helper()
+
+	// Check file size after truncate
+	// Should be zero
+	info, err := wal.file.Stat()
+	if err != nil {
+		t.Fatalf("wal test: stat WAL: %v", err)
+	}
+
+	if info.Size() != 0 {
+		t.Fatalf("wal test: expected file size to be 0 after truncate, got: %d", info.Size())
+	}
+
+	_, err = Next(wal)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("wal test: expected error to be: %v, got %v", io.EOF, err)
 	}
 }
