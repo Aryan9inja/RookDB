@@ -149,6 +149,26 @@ func TestWAL(t *testing.T) {
 
 		afterTruncateCheck(t, wal2)
 	})
+
+	t.Run("incomplete checksum", func(t *testing.T) {
+		wal, path := newTestWAL(t)
+
+		// length fulfills 4 bytes promise
+		// payload fulfills `length` bytes promise
+		// but checksum does not fulfill 4 bytes promise
+		incompleteChecksum := []byte{0x00, 0x00, 0x00, 0x02, 0x09, 0x01, 0x02}
+		writeRawWAL(t, path, incompleteChecksum)
+
+		wal2 := reopenTestWAL(t, wal, path)
+		defer wal2.Close()
+
+		_, err := Next(wal2)
+		if !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("wal test: incomplete checksum: expected: %v, got %v", io.ErrUnexpectedEOF, err)
+		}
+
+		afterTruncateCheck(t, wal2)
+	})
 }
 
 func newTestWAL(t *testing.T) (*WAL, string) {
