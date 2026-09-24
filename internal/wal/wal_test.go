@@ -2,6 +2,7 @@ package wal
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"hash/crc32"
 	"io"
@@ -195,6 +196,31 @@ func TestWAL(t *testing.T) {
 		_, err := Next(wal2)
 		if err == nil || err.Error() != expectedError {
 			t.Fatalf("wal test: checksum mismatch: expected error to be: %v, got: %v", expectedError, err)
+		}
+
+		afterTruncateCheck(t, wal2)
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		wal, path := newTestWAL(t)
+
+		recordBuffer := []byte{0x00, 0x00, 0x00, 0x02, 0x09, 0x01}
+		checksum := crc32.ChecksumIEEE(recordBuffer)
+		checksumBuffer := make([]byte, 4)
+		binary.BigEndian.PutUint32(checksumBuffer, checksum)
+
+		// correct data but invalid json
+		recordBuffer = append(recordBuffer, checksumBuffer...)
+
+		writeRawWAL(t, path, recordBuffer)
+
+		wal2 := reopenTestWAL(t, wal, path)
+		defer wal2.Close()
+
+		_, err := Next(wal2)
+		var serr *json.SyntaxError
+		if !errors.As(err, &serr) {
+			t.Fatalf("wal test: invalid json: expected *json.SyntaxError, got: %v", err)
 		}
 
 		afterTruncateCheck(t, wal2)
