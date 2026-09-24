@@ -87,31 +87,45 @@ The storage engine should only need to work with `Operation` values.
 
 ---
 
-## WAL API
+WAL API
 
-For the initial version, the WAL exposes two primary operations:
-* Invariant: a newly created WAL starts with its cursor at offset 0.
+For the initial version, the WAL exposes three primary operations:
 
 ```
 Append(Operation)
-
 Next()
+TruncateCurrentRecord()
 ```
 
-`Append` persists a single database operation.
+Append persists a single database operation.
 
-`Next` sequentially reads and validates the next WAL record and returns
-the reconstructed Operation.
+Next sequentially reads and validates the next WAL record and returns the reconstructed Operation.
 
-The storage engine drives recovery by repeatedly calling `Next()` until
-the WAL reaches the end of its valid history.
+TruncateCurrentRecord truncates the record most recently returned by `Next()`. This operation is intended for recovery when the storage engine determines that a structurally valid operation is semantically invalid.
 
-This keeps recovery streaming rather than requiring the WAL to load
-the entire history into memory.
+The WAL internally tracks the starting offset of the current record:
 
-Operations such as `Truncate` are intentionally not exposed as part of
-the public WAL API. Tail truncation is considered an internal recovery
-mechanism rather than a responsibility of the storage engine.
+```
+currentRecordOffset *int64
+```
+
+The offset is set when Next() begins processing a record and remains available after a successful Next() so that the storage engine can validate the returned operation.
+
+The offset is cleared when:
+
+* `Next()` reaches io.EOF.
+* `Next()` returns an error.
+* `TruncateCurrentRecord()` successfully truncates the current record.
+
+Calling TruncateCurrentRecord() when no current record exists is an error.
+
+The storage engine must validate and apply the operation returned by Next() before calling Next() again. This ensures that the WAL's current-record state always corresponds to the operation currently being processed.
+
+Tail truncation remains a WAL responsibility. The storage engine does not directly manipulate WAL offsets or the underlying WAL file.
+
+The storage engine drives recovery by repeatedly calling Next() until the WAL reaches the end of its valid history.
+
+This keeps recovery streaming rather than requiring the WAL to load the entire history into memory.
 
 ---
 
@@ -196,13 +210,12 @@ This establishes the following invariant:
 
 ---
 
-## WAL Recovery
+WAL Recovery
 
 Recovery scans the WAL sequentially rather than loading the entire file into memory.
 
 The recovery process is conceptually:
 
-```
 Open WAL
     ↓
 Read LENGTH
@@ -219,10 +232,11 @@ Deserialize PAYLOAD
     ↓
 Return Operation
     ↓
-Storage Engine validates/applies Operation
+Storage Engine validates Operation
+    ↓
+Storage Engine applies Operation
     ↓
 Next()
-```
 
 Recovery stops at the first invalid or incomplete record.
 
@@ -230,9 +244,15 @@ The invalid tail is truncated because records after the first invalid record can
 
 Valid records before the invalid tail remain part of the recoverable database state.
 
+If `Next()` detects a structural or serialization failure itself, the WAL truncates the invalid record internally.
+
+If `Next()` successfully returns an Operation but the storage engine determines that the operation is semantically invalid, the storage engine requests truncation through TruncateCurrentRecord().
+
+The WAL remains responsible for the actual truncation operation.
+
 ---
 
-## Recovery Invariants
+Recovery Invariants
 
 The WAL follows these invariants during recovery:
 
@@ -241,12 +261,18 @@ The WAL follows these invariants during recovery:
 * The declared length must be within the supported record-size limit.
 * The complete payload must be readable.
 * The complete checksum must be readable.
-* CRC32 must match `LENGTH + PAYLOAD`.
-* The payload must deserialize successfully.
+* CRC32 must match LENGTH + PAYLOAD.
 * The payload must deserialize successfully into an Operation.
 * Recovery stops at the first invalid or incomplete record.
 * The invalid tail is truncated.
 * Valid records before the invalid tail are retained.
+
+Additionally:
+
+* At most one record is considered the current recovery record at a time.
+* currentRecordOffset identifies the starting offset of the operation most recently returned by Next().
+* TruncateCurrentRecord() is only valid while a current record exists.
+* Successfully truncating the current record clears currentRecordOffset.
 
 ---
 
@@ -299,3 +325,107 @@ the WAL is truncated from its starting offset.
 
 This ensures that RookDB does not skip an operation it cannot interpret and then
 continue replaying later operations as though the database history were intact.
+
+## Storage Engine
+
+The storage engine maintains the current materialized state of the database.
+
+For the initial version, the state is represented by an in-memory Go map:
+
+```
+map[string]string
+```
+
+The WAL remains the durable source of truth, while the map represents the current state reconstructed from that history.
+
+The initial storage engine is conceptually:
+
+```
+type Engine struct {
+    wal   *wal.WAL
+    store map[string]string
+}
+```
+
+The storage engine is responsible for:
+
+Maintaining the current in-memory database state.
+Validating operation semantics.
+Applying valid operations to the in-memory state.
+Driving WAL recovery during startup.
+Appending mutations to the WAL before modifying in-memory state.
+
+The storage engine does not directly manipulate the WAL file or its offsets.
+
+### Storage Engine Write Ordering
+
+A successful mutation follows this sequence:
+
+```
+Operation
+    ↓
+WAL.Append(Operation)
+    ↓
+WAL synchronizes the record
+    ↓
+Update in-memory state
+    ↓
+Return success
+```
+
+`WAL.Append()` owns the durability guarantee.
+
+If `WAL.Append()` fails, the storage engine must not modify the in-memory state.
+
+This establishes the invariant:
+```
+An operation is applied to the current in-memory state only after its WAL record has been successfully persisted according to the WAL durability contract.
+```
+### Storage Engine Recovery
+
+When the storage engine is initialized, it opens the WAL and reconstructs the current state by replaying operations sequentially.
+
+Conceptually:
+```
+NewEngine
+    ↓
+NewWAL
+    ↓
+Next()
+    ↓
+Validate operation semantics
+    ↓
+Apply operation to map
+    ↓
+Next()
+    ↓
+...
+    ↓
+io.EOF
+    ↓
+Database ready for normal operations
+```
+
+The storage engine must validate and apply each operation before requesting the next operation from the WAL.
+
+If semantic validation fails, the current WAL record is considered invalid for the current RookDB version. The storage engine requests TruncateCurrentRecord() and recovery stops.
+
+### Initial Operation Semantics
+
+The initial storage engine supports:
+
+```
+SET key value
+DELETE key
+GET key
+```
+
+* `SET` persists the key/value pair.
+* `DELETE` removes the key if it exists. Deleting a key that does not exist is a successful no-op.
+* `GET` returns the current value for an existing key.
+
+If a requested key does not exist, `GET` returns `ErrKeyNotFound`.
+
+The storage engine does not need to inspect whether a `DELETE` actually changes the current state before writing it to the WAL. A `DELETE` operation is replayable even when the key is already absent.
+
+This keeps the v1 write and recovery paths simple and deterministic.
