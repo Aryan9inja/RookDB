@@ -130,6 +130,25 @@ func TestWAL(t *testing.T) {
 
 		afterTruncateCheck(t, wal2)
 	})
+
+	t.Run("incomplete payload", func(t *testing.T) {
+		wal, path := newTestWAL(t)
+
+		// length promised 2 bytes
+		// but payload is only 1 byte long
+		incompletePayload := []byte{0x00, 0x00, 0x00, 0x02, 0x09}
+		writeRawWAL(t, path, incompletePayload)
+
+		wal2 := reopenTestWAL(t, wal, path)
+		defer wal2.Close()
+
+		_, err := Next(wal2)
+		if !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("wal test: incomplete payload: expected: %v, got %v", io.ErrUnexpectedEOF, err)
+		}
+
+		afterTruncateCheck(t, wal2)
+	})
 }
 
 func newTestWAL(t *testing.T) (*WAL, string) {
