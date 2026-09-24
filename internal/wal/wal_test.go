@@ -1,7 +1,9 @@
 package wal
 
 import (
+	"encoding/binary"
 	"errors"
+	"hash/crc32"
 	"io"
 	"os"
 	"path/filepath"
@@ -165,6 +167,34 @@ func TestWAL(t *testing.T) {
 		_, err := Next(wal2)
 		if !errors.Is(err, io.ErrUnexpectedEOF) {
 			t.Fatalf("wal test: incomplete checksum: expected: %v, got %v", io.ErrUnexpectedEOF, err)
+		}
+
+		afterTruncateCheck(t, wal2)
+	})
+
+	t.Run("checksum mismatch", func(t *testing.T) {
+		expectedError := "recover: checksum mismatch"
+
+		wal, path := newTestWAL(t)
+
+		// Creating some data + invalid checksum
+		recordBuffer := []byte{0x00, 0x00, 0x00, 0x02, 0x09, 0x01}
+		// some byte/bytes corrupted
+		invalidBuffer := []byte{0x00, 0x00, 0x00, 0x02, 0x08, 0x01}
+		invalidChecksum := crc32.ChecksumIEEE(invalidBuffer)
+		invalidChecksumBuffer := make([]byte, 4)
+		binary.BigEndian.PutUint32(invalidChecksumBuffer, invalidChecksum)
+
+		recordBuffer = append(recordBuffer, invalidChecksumBuffer...)
+
+		writeRawWAL(t, path, recordBuffer)
+
+		wal2 := reopenTestWAL(t, wal, path)
+		defer wal2.Close()
+
+		_, err := Next(wal2)
+		if err == nil || err.Error() != expectedError {
+			t.Fatalf("wal test: checksum mismatch: expected error to be: %v, got: %v", expectedError, err)
 		}
 
 		afterTruncateCheck(t, wal2)
