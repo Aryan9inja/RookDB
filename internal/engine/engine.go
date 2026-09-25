@@ -33,3 +33,13 @@ func validateOperation(op operation.Operation) error {
 
 	return nil
 }
+
+func (engine *Engine) applyOperation(op operation.Operation) {
+	switch op.OpType {
+	case operation.Set:
+		engine.store[op.Key] = op.Value
+
+	case operation.Delete:
+		delete(engine.store, op.Key)
+	}
+}
