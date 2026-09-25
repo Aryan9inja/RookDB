@@ -18,7 +18,8 @@ const MaxRecordSize = 512
 
 // WAL manages the open WAL file.
 type WAL struct {
-	file *os.File
+	file                *os.File
+	currentRecordOffset *int64
 }
 
 // New WAL initialize a WAL struct in memory.
@@ -49,7 +50,7 @@ func NewWAL(path string) (*WAL, error) {
 		return nil, fmt.Errorf("seek WAL: %w", err)
 	}
 
-	return &WAL{file: fd}, nil
+	return &WAL{file: fd, currentRecordOffset: nil}, nil
 	// TODO : After WAL lifecycle is clear, we need a close call on fd
 }
 
@@ -115,17 +116,20 @@ func Next(wal *WAL) (*operation.Operation, error) {
 	if err != nil {
 		return nil, fmt.Errorf("recover: offset seeking: %w", err)
 	}
+	wal.currentRecordOffset = &currOffset
 
 	lengthBuffer := make([]byte, 4)
 
 	_, err = io.ReadFull(wal.file, lengthBuffer)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
+			wal.currentRecordOffset = nil
 			return nil, io.EOF
 		} else if errors.Is(err, io.ErrUnexpectedEOF) {
 			if err := truncateWAL(wal, currOffset); err != nil {
 				return nil, err
 			}
+			wal.currentRecordOffset = nil
 			return nil, fmt.Errorf("recover: read error: length: %w", err)
 		} else {
 			return nil, fmt.Errorf("recover: read error: length: %w", err)
@@ -137,6 +141,7 @@ func Next(wal *WAL) (*operation.Operation, error) {
 		if err := truncateWAL(wal, currOffset); err != nil {
 			return nil, err
 		}
+		wal.currentRecordOffset = nil
 		return nil, errors.New("recover: max record size exceeded")
 	}
 
@@ -147,6 +152,7 @@ func Next(wal *WAL) (*operation.Operation, error) {
 			if err := truncateWAL(wal, currOffset); err != nil {
 				return nil, err
 			}
+			wal.currentRecordOffset = nil
 			return nil, fmt.Errorf("recover: read error: payload: %w", err)
 		} else {
 			return nil, fmt.Errorf("recover: read error: payload: %w", err)
@@ -160,6 +166,7 @@ func Next(wal *WAL) (*operation.Operation, error) {
 			if err := truncateWAL(wal, currOffset); err != nil {
 				return nil, err
 			}
+			wal.currentRecordOffset = nil
 			return nil, fmt.Errorf("recover: read error: checksum: %w", err)
 		} else {
 			return nil, fmt.Errorf("recover: read error: checksum: %w", err)
@@ -176,6 +183,7 @@ func Next(wal *WAL) (*operation.Operation, error) {
 		if err := truncateWAL(wal, currOffset); err != nil {
 			return nil, err
 		}
+		wal.currentRecordOffset = nil
 		return nil, errors.New("recover: checksum mismatch")
 	}
 
@@ -184,10 +192,24 @@ func Next(wal *WAL) (*operation.Operation, error) {
 		if err := truncateWAL(wal, currOffset); err != nil {
 			return nil, err
 		}
+		wal.currentRecordOffset = nil
 		return nil, fmt.Errorf("recover: json unmarshal: %w", err)
 	}
 
 	return &op, nil
+}
+
+func (wal *WAL) TruncateCurrentRecord() error {
+	if wal.currentRecordOffset == nil {
+		return fmt.Errorf("truncate curr record: can't truncate nil offset")
+	}
+
+	if err := truncateWAL(wal, *wal.currentRecordOffset); err != nil {
+		return fmt.Errorf("truncate curr record: %w", err)
+	}
+	wal.currentRecordOffset = nil
+
+	return nil
 }
 
 func truncateWAL(wal *WAL, truncateOffset int64) error {
