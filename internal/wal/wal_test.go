@@ -225,6 +225,46 @@ func TestWAL(t *testing.T) {
 
 		afterTruncateCheck(t, wal2)
 	})
+
+	t.Run("truncate curr record: next returned op", func(t *testing.T) {
+		wal, path := newTestWAL(t)
+
+		op := operation.Operation{
+			OpType: "XYZ",
+			Key:    "ABC",
+			Value:  "DEF",
+		}
+
+		ok, err := Append(wal, op)
+		if !ok || err != nil {
+			t.Fatalf("wal test: truncate curr record: next returned op: append: %v", err)
+		}
+
+		wal2 := reopenTestWAL(t, wal, path)
+		defer wal2.Close()
+
+		// Here, storage engine will find issue with operation
+		// So we will need to truncate the current record
+		if _, err := Next(wal2); err != nil {
+			t.Fatalf("wal test: truncate curr record: next returned op: next: %v", err)
+		}
+
+		if err := wal2.TruncateCurrentRecord(); err != nil {
+			t.Fatalf("wal test: truncate curr record: next returned op: truncate: expected no error, got %v", err)
+		}
+
+		afterTruncateCheck(t, wal2)
+	})
+
+	t.Run("truncate curr record with no record", func(t *testing.T) {
+		expectedError := "truncate curr record: can't truncate nil offset"
+		wal, _ := newTestWAL(t)
+		if err := wal.TruncateCurrentRecord(); err == nil {
+			t.Fatalf("wal test: truncate curr record with no record: expected `%v`, got nothing", expectedError)
+		} else if err.Error() != expectedError {
+			t.Fatalf("wal test: truncate curr record with no record: expected `%v`, got `%v`", expectedError, err)
+		}
+	})
 }
 
 func newTestWAL(t *testing.T) (*WAL, string) {
