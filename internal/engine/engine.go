@@ -4,7 +4,13 @@ import (
 	"errors"
 
 	"github.com/Aryan9inja/RookDB/internal/operation"
+	"github.com/Aryan9inja/RookDB/internal/wal"
 )
+
+type Engine struct {
+	wal   *wal.WAL
+	store map[string]string
+}
 
 func validateOperation(op operation.Operation) error {
 	switch op.OpType {
