@@ -14,6 +14,32 @@ type Engine struct {
 	store map[string]string
 }
 
+func NewEngine(path string) (*Engine, error) {
+	w, err := wal.NewWAL(path)
+	if err != nil {
+		return nil, fmt.Errorf("new engine: new wal: %w", err)
+	}
+
+	engine := &Engine{
+		wal:   w,
+		store: make(map[string]string),
+	}
+
+	if err := engine.recover(); err != nil {
+		if closeErr := engine.wal.Close(); closeErr != nil {
+			return nil, fmt.Errorf(
+				"new engine: recover: %w; close wal: %v",
+				err,
+				closeErr,
+			)
+		}
+
+		return nil, fmt.Errorf("new engine: recover: %w", err)
+	}
+
+	return engine, nil
+}
+
 func validateOperation(op operation.Operation) error {
 	switch op.OpType {
 	case operation.Set:
