@@ -2,6 +2,8 @@ package engine
 
 import (
 	"errors"
+	"fmt"
+	"io"
 
 	"github.com/Aryan9inja/RookDB/internal/operation"
 	"github.com/Aryan9inja/RookDB/internal/wal"
@@ -34,6 +36,7 @@ func validateOperation(op operation.Operation) error {
 	return nil
 }
 
+// caller should call this only on valid operations
 func (engine *Engine) applyOperation(op operation.Operation) {
 	switch op.OpType {
 	case operation.Set:
@@ -41,5 +44,27 @@ func (engine *Engine) applyOperation(op operation.Operation) {
 
 	case operation.Delete:
 		delete(engine.store, op.Key)
+	}
+}
+
+func (engine *Engine) recover() error {
+	for {
+		op, err := wal.Next(engine.wal)
+		if errors.Is(err, io.EOF) {
+			// recovery succeeded
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("engine: recovery error: %w", err)
+		}
+
+		if err := validateOperation(*op); err != nil {
+			if err := engine.wal.TruncateCurrentRecord(); err != nil {
+				return fmt.Errorf("engine: recovery error: truncate invalid records: %w", err)
+			}
+			return fmt.Errorf("engine: recovery error: %w", err)
+		}
+
+		// Apply valid operation
+		engine.applyOperation(*op)
 	}
 }
