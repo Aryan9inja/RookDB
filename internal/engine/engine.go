@@ -42,6 +42,10 @@ func NewEngine(path string) (*Engine, error) {
 	return engine, nil
 }
 
+func (engine *Engine) Close() error {
+	return engine.wal.Close()
+}
+
 func (engine *Engine) Set(key, value string) error {
 	setOp := operation.Operation{
 		OpType: operation.Set,
