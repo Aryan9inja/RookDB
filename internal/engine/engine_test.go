@@ -38,6 +38,30 @@ func TestEngine(t *testing.T) {
 			t.Fatalf("engine test: get missing key: expected empty string but got %v", got)
 		}
 	})
+
+	t.Run("set overwrite existing value", func(t *testing.T) {
+		engine := newTestEngine(t)
+
+		key := "name"
+		value := "Aryan"
+		newValue := "Ninja"
+
+		if err := engine.Set(key, value); err != nil {
+			t.Fatalf("engine test: set overwrite existing value: Set1: %v", err)
+		}
+
+		if err := engine.Set(key, newValue); err != nil {
+			t.Fatalf("engine test: set overwrite existing value: Set1: %v", err)
+		}
+
+		got, err := engine.Get(key)
+		if err != nil {
+			t.Fatalf("engine test: set overwrite existing value: Get: %v", err)
+		}
+		if got != newValue {
+			t.Fatalf("Expected got to be %v but it is %v", newValue, got)
+		}
+	})
 }
 
 func newTestEngine(t *testing.T) *Engine {
