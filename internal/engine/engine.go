@@ -14,6 +14,8 @@ type Engine struct {
 	store map[string]string
 }
 
+var ErrKeyNotFound = errors.New("key not found")
+
 func NewEngine(path string) (*Engine, error) {
 	w, err := wal.NewWAL(path)
 	if err != nil {
@@ -62,7 +64,7 @@ func (engine *Engine) Set(key, value string) error {
 
 func (engine *Engine) Delete(key string) error {
 	deleteOp := operation.Operation{
-		OpType: operation.Set,
+		OpType: operation.Delete,
 		Key:    key,
 	}
 
@@ -77,6 +79,15 @@ func (engine *Engine) Delete(key string) error {
 	engine.applyOperation(deleteOp)
 
 	return nil
+}
+
+func (engine *Engine) Get(key string) (string, error) {
+	value, exists := engine.store[key]
+	if !exists {
+		return "", ErrKeyNotFound
+	}
+
+	return value, nil
 }
 
 func validateOperation(op operation.Operation) error {
