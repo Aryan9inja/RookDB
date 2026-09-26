@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -22,6 +23,19 @@ func TestEngine(t *testing.T) {
 		}
 		if got != value {
 			t.Fatalf("Expected got to be %v but it is %v", value, got)
+		}
+	})
+
+	t.Run("get missing key", func(t *testing.T) {
+		engine := newTestEngine(t)
+
+		key := "missing"
+		got, err := engine.Get(key)
+		if !errors.Is(err, ErrKeyNotFound) {
+			t.Fatalf("engine test: get missing key: expected error to be %v, got %v", ErrKeyNotFound, err)
+		}
+		if got != "" {
+			t.Fatalf("engine test: get missing key: expected empty string but got %v", got)
 		}
 	})
 }
