@@ -40,6 +40,26 @@ func NewEngine(path string) (*Engine, error) {
 	return engine, nil
 }
 
+func (engine *Engine) Set(key, value string) error {
+	setOp := operation.Operation{
+		OpType: operation.Set,
+		Key:    key,
+		Value:  value,
+	}
+
+	if err := validateOperation(setOp); err != nil {
+		return err
+	}
+
+	if err := wal.Append(engine.wal, setOp); err != nil {
+		return fmt.Errorf("wal append: %w", err)
+	}
+
+	engine.applyOperation(setOp)
+
+	return nil
+}
+
 func validateOperation(op operation.Operation) error {
 	switch op.OpType {
 	case operation.Set:
