@@ -9,6 +9,7 @@ import (
 func TestEngine(t *testing.T) {
 	t.Run("set and get", func(t *testing.T) {
 		engine := newTestEngine(t)
+		defer engine.Close()
 
 		key := "name"
 		value := "Aryan"
@@ -28,6 +29,7 @@ func TestEngine(t *testing.T) {
 
 	t.Run("get missing key", func(t *testing.T) {
 		engine := newTestEngine(t)
+		defer engine.Close()
 
 		key := "missing"
 		got, err := engine.Get(key)
@@ -41,6 +43,7 @@ func TestEngine(t *testing.T) {
 
 	t.Run("set overwrite existing value", func(t *testing.T) {
 		engine := newTestEngine(t)
+		defer engine.Close()
 
 		key := "name"
 		value := "Aryan"
@@ -65,6 +68,7 @@ func TestEngine(t *testing.T) {
 
 	t.Run("delete existing value", func(t *testing.T) {
 		engine := newTestEngine(t)
+		defer engine.Close()
 
 		key := "name"
 		value := "Aryan"
@@ -84,6 +88,7 @@ func TestEngine(t *testing.T) {
 
 	t.Run("delete missing key", func(t *testing.T) {
 		engine := newTestEngine(t)
+		defer engine.Close()
 
 		key := "missing"
 		if err := engine.Delete(key); err != nil {
