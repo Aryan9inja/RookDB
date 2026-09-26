@@ -60,6 +60,25 @@ func (engine *Engine) Set(key, value string) error {
 	return nil
 }
 
+func (engine *Engine) Delete(key string) error {
+	deleteOp := operation.Operation{
+		OpType: operation.Set,
+		Key:    key,
+	}
+
+	if err := validateOperation(deleteOp); err != nil {
+		return err
+	}
+
+	if err := wal.Append(engine.wal, deleteOp); err != nil {
+		return fmt.Errorf("wal append: %w", err)
+	}
+
+	engine.applyOperation(deleteOp)
+
+	return nil
+}
+
 func validateOperation(op operation.Operation) error {
 	switch op.OpType {
 	case operation.Set:
