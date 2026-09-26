@@ -65,11 +65,11 @@ func (w *WAL) Close() error {
 
 // Used to append operations into wal file.
 // Internally does serialization and checksum generation.
-func Append(wal *WAL, op operation.Operation) (bool, error) {
+func Append(wal *WAL, op operation.Operation) (error) {
 	// Serialize operation to form json bytes
 	payload, err := json.Marshal(op)
 	if err != nil {
-		return false, fmt.Errorf("payload creation WAL: %w", err)
+		return fmt.Errorf("payload creation WAL: %w", err)
 	}
 
 	// Get length of payload in uint32
@@ -91,24 +91,24 @@ func Append(wal *WAL, op operation.Operation) (bool, error) {
 	buffer = append(buffer, chBuff...)
 
 	if len(buffer) > MaxRecordSize {
-		return false, errors.New("large payload error")
+		return errors.New("large payload error")
 	}
 
 	// Write the buffer to disk
 	n, err := wal.file.Write(buffer)
 	if err != nil {
-		return false, fmt.Errorf("write WAL: %w", err)
+		return fmt.Errorf("write WAL: %w", err)
 	}
 	if n < len(buffer) {
-		return false, fmt.Errorf("short write: wrote %d of %d bytes", n, len(buffer))
+		return fmt.Errorf("short write: wrote %d of %d bytes", n, len(buffer))
 	}
 
 	// Sync to ensure durability
 	if err := wal.file.Sync(); err != nil {
-		return false, fmt.Errorf("sync write WAL: %w", err)
+		return fmt.Errorf("sync write WAL: %w", err)
 	}
 
-	return true, nil
+	return nil
 }
 
 func Next(wal *WAL) (*operation.Operation, error) {

@@ -56,8 +56,8 @@ func TestWAL(t *testing.T) {
 
 			// test append
 			for _, op := range tt.ops {
-				ok, err := Append(wal, op)
-				if !ok || err != nil {
+				err := Append(wal, op)
+				if err != nil {
 					t.Fatalf("wal test: append happy path: %v", err)
 				}
 			}
@@ -235,8 +235,8 @@ func TestWAL(t *testing.T) {
 			Value:  "DEF",
 		}
 
-		ok, err := Append(wal, op)
-		if !ok || err != nil {
+		err := Append(wal, op)
+		if err != nil {
 			t.Fatalf("wal test: truncate curr record: next returned op: append: %v", err)
 		}
 
