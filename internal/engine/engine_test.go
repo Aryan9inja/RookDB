@@ -51,7 +51,7 @@ func TestEngine(t *testing.T) {
 		}
 
 		if err := engine.Set(key, newValue); err != nil {
-			t.Fatalf("engine test: set overwrite existing value: Set1: %v", err)
+			t.Fatalf("engine test: set overwrite existing value: Set2: %v", err)
 		}
 
 		got, err := engine.Get(key)
@@ -60,6 +60,25 @@ func TestEngine(t *testing.T) {
 		}
 		if got != newValue {
 			t.Fatalf("Expected got to be %v but it is %v", newValue, got)
+		}
+	})
+
+	t.Run("delete existing value", func(t *testing.T) {
+		engine := newTestEngine(t)
+
+		key := "name"
+		value := "Aryan"
+
+		if err := engine.Set(key, value); err != nil {
+			t.Fatalf("engine test: delete existing value: Set: %v", err)
+		}
+
+		if err := engine.Delete(key); err != nil {
+			t.Fatalf("engine test: delete existing value: Delete: %v", err)
+		}
+
+		if _, err := engine.Get(key); !errors.Is(err, ErrKeyNotFound) {
+			t.Fatalf("engine test: delete existing value: Get: expected error to be %v, got %v", ErrKeyNotFound, err)
 		}
 	})
 }
