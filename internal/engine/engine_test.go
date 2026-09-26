@@ -86,8 +86,38 @@ func TestEngine(t *testing.T) {
 		engine := newTestEngine(t)
 
 		key := "missing"
-		if err := engine.Delete(key); err != nil{
+		if err := engine.Delete(key); err != nil {
 			t.Fatalf("engine test: delete missing key: expected no error got: %v", err)
+		}
+	})
+
+	t.Run("persistence across restarts", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "wal.log")
+
+		engine1 := newTestEngineAtPath(t, path)
+
+		key := "name"
+		value := "Aryan"
+
+		if err := engine1.Set(key, value); err != nil {
+			t.Fatalf("engine test: persistence across restarts: Set: %v", err)
+		}
+
+		if err := engine1.Close(); err != nil {
+			t.Fatalf("engine test: persistence across restarts: Close: %v", err)
+		}
+
+		engine2 := newTestEngineAtPath(t, path)
+		defer engine2.Close()
+
+		got, err := engine2.Get(key)
+		if err != nil {
+			t.Fatalf("engine test: persistence across restarts: Get: %v", err)
+		}
+
+		if got != value {
+			t.Fatalf("engine test: persistence across restarts: expected %q, got %q", value, got)
 		}
 	})
 }
@@ -97,6 +127,17 @@ func newTestEngine(t *testing.T) *Engine {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wal.log")
+
+	engine, err := NewEngine(path)
+	if err != nil {
+		t.Fatalf("setup Engine: %v", err)
+	}
+
+	return engine
+}
+
+func newTestEngineAtPath(t *testing.T, path string) *Engine {
+	t.Helper()
 
 	engine, err := NewEngine(path)
 	if err != nil {
