@@ -81,6 +81,15 @@ func TestEngine(t *testing.T) {
 			t.Fatalf("engine test: delete existing value: Get: expected error to be %v, got %v", ErrKeyNotFound, err)
 		}
 	})
+
+	t.Run("delete missing key", func(t *testing.T) {
+		engine := newTestEngine(t)
+
+		key := "missing"
+		if err := engine.Delete(key); err != nil{
+			t.Fatalf("engine test: delete missing key: expected no error got: %v", err)
+		}
+	})
 }
 
 func newTestEngine(t *testing.T) *Engine {
