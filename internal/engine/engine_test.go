@@ -96,7 +96,7 @@ func TestEngine(t *testing.T) {
 		}
 	})
 
-	t.Run("persistence across restarts", func(t *testing.T) {
+	t.Run("persistance across restarts", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "wal.log")
 
