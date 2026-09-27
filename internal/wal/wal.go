@@ -65,7 +65,7 @@ func (w *WAL) Close() error {
 
 // Used to append operations into wal file.
 // Internally does serialization and checksum generation.
-func Append(wal *WAL, op operation.Operation) (error) {
+func Append(wal *WAL, op operation.Operation) error {
 	// Serialize operation to form json bytes
 	payload, err := json.Marshal(op)
 	if err != nil {
