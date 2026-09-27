@@ -14,13 +14,13 @@ func TestEngine(t *testing.T) {
 		key := "name"
 		value := "Aryan"
 
-		if err := engine.Set(key, value); err != nil {
-			t.Fatalf("engine test: set and get: Set: %v", err)
+		if err := engine.set(key, value); err != nil {
+			t.Fatalf("engine test: set and get: set: %v", err)
 		}
 
-		got, err := engine.Get(key)
+		got, err := engine.get(key)
 		if err != nil {
-			t.Fatalf("engine test: set and get: Get: %v", err)
+			t.Fatalf("engine test: set and get: get: %v", err)
 		}
 		if got != value {
 			t.Fatalf("Expected got to be %v but it is %v", value, got)
@@ -32,7 +32,7 @@ func TestEngine(t *testing.T) {
 		defer engine.Close()
 
 		key := "missing"
-		got, err := engine.Get(key)
+		got, err := engine.get(key)
 		if !errors.Is(err, ErrKeyNotFound) {
 			t.Fatalf("engine test: get missing key: expected error to be %v, got %v", ErrKeyNotFound, err)
 		}
@@ -49,17 +49,17 @@ func TestEngine(t *testing.T) {
 		value := "Aryan"
 		newValue := "Ninja"
 
-		if err := engine.Set(key, value); err != nil {
-			t.Fatalf("engine test: set overwrite existing value: Set1: %v", err)
+		if err := engine.set(key, value); err != nil {
+			t.Fatalf("engine test: set overwrite existing value: set1: %v", err)
 		}
 
-		if err := engine.Set(key, newValue); err != nil {
-			t.Fatalf("engine test: set overwrite existing value: Set2: %v", err)
+		if err := engine.set(key, newValue); err != nil {
+			t.Fatalf("engine test: set overwrite existing value: set2: %v", err)
 		}
 
-		got, err := engine.Get(key)
+		got, err := engine.get(key)
 		if err != nil {
-			t.Fatalf("engine test: set overwrite existing value: Get: %v", err)
+			t.Fatalf("engine test: set overwrite existing value: get: %v", err)
 		}
 		if got != newValue {
 			t.Fatalf("Expected got to be %v but it is %v", newValue, got)
@@ -73,16 +73,16 @@ func TestEngine(t *testing.T) {
 		key := "name"
 		value := "Aryan"
 
-		if err := engine.Set(key, value); err != nil {
-			t.Fatalf("engine test: delete existing value: Set: %v", err)
+		if err := engine.set(key, value); err != nil {
+			t.Fatalf("engine test: delete existing value: set: %v", err)
 		}
 
-		if err := engine.Delete(key); err != nil {
-			t.Fatalf("engine test: delete existing value: Delete: %v", err)
+		if err := engine.delete(key); err != nil {
+			t.Fatalf("engine test: delete existing value: delete: %v", err)
 		}
 
-		if _, err := engine.Get(key); !errors.Is(err, ErrKeyNotFound) {
-			t.Fatalf("engine test: delete existing value: Get: expected error to be %v, got %v", ErrKeyNotFound, err)
+		if _, err := engine.get(key); !errors.Is(err, ErrKeyNotFound) {
+			t.Fatalf("engine test: delete existing value: get: expected error to be %v, got %v", ErrKeyNotFound, err)
 		}
 	})
 
@@ -91,7 +91,7 @@ func TestEngine(t *testing.T) {
 		defer engine.Close()
 
 		key := "missing"
-		if err := engine.Delete(key); err != nil {
+		if err := engine.delete(key); err != nil {
 			t.Fatalf("engine test: delete missing key: expected no error got: %v", err)
 		}
 	})
@@ -105,8 +105,8 @@ func TestEngine(t *testing.T) {
 		key := "name"
 		value := "Aryan"
 
-		if err := engine1.Set(key, value); err != nil {
-			t.Fatalf("engine test: persistence across restarts: Set: %v", err)
+		if err := engine1.set(key, value); err != nil {
+			t.Fatalf("engine test: persistence across restarts: set: %v", err)
 		}
 
 		if err := engine1.Close(); err != nil {
@@ -116,9 +116,9 @@ func TestEngine(t *testing.T) {
 		engine2 := newTestEngineAtPath(t, path)
 		defer engine2.Close()
 
-		got, err := engine2.Get(key)
+		got, err := engine2.get(key)
 		if err != nil {
-			t.Fatalf("engine test: persistence across restarts: Get: %v", err)
+			t.Fatalf("engine test: persistence across restarts: get: %v", err)
 		}
 
 		if got != value {

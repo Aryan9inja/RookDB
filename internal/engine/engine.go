@@ -15,6 +15,7 @@ type Engine struct {
 }
 
 var ErrKeyNotFound = errors.New("key not found")
+var ErrUnsupportedCommand = errors.New("unsupported command")
 
 func NewEngine(path string) (*Engine, error) {
 	w, err := wal.NewWAL(path)
@@ -46,7 +47,7 @@ func (engine *Engine) Close() error {
 	return engine.wal.Close()
 }
 
-func (engine *Engine) Set(key, value string) error {
+func (engine *Engine) set(key, value string) error {
 	setOp := operation.Operation{
 		OpType: operation.Set,
 		Key:    key,
@@ -66,7 +67,7 @@ func (engine *Engine) Set(key, value string) error {
 	return nil
 }
 
-func (engine *Engine) Delete(key string) error {
+func (engine *Engine) delete(key string) error {
 	deleteOp := operation.Operation{
 		OpType: operation.Delete,
 		Key:    key,
@@ -85,7 +86,7 @@ func (engine *Engine) Delete(key string) error {
 	return nil
 }
 
-func (engine *Engine) Get(key string) (string, error) {
+func (engine *Engine) get(key string) (string, error) {
 	value, exists := engine.store[key]
 	if !exists {
 		return "", ErrKeyNotFound
