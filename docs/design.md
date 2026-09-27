@@ -429,3 +429,42 @@ If a requested key does not exist, `GET` returns `ErrKeyNotFound`.
 The storage engine does not need to inspect whether a `DELETE` actually changes the current state before writing it to the WAL. A `DELETE` operation is replayable even when the key is already absent.
 
 This keeps the v1 write and recovery paths simple and deterministic.
+
+### Database Data Directory
+
+RookDB separates the location of its executable from the location of its persistent database state.
+
+The executable's working directory is not used to determine where database files are stored because the process may be launched from any directory. Instead, the database data directory is explicitly provided to RookDB.
+
+For v1, the data directory contains the WAL:
+
+```text
+data/
+└── wal.log
+```
+
+The CLI therefore operates conceptually as:
+
+```text
+rookdb <data-directory>
+```
+
+RookDB derives its internal storage paths from this directory rather than exposing individual storage files such as the WAL as part of the CLI interface.
+
+This also leaves room for the storage layout to evolve without changing the meaning of the CLI argument:
+
+```text
+data/
+├── wal/
+├── sstables/
+├── snapshots/
+└── ...
+```
+
+#### Design rationale
+
+* The executable and persistent state have independent lifecycles.
+* The process may be started from any working directory.
+* Users specify where database state should live.
+* Individual storage files remain an internal implementation detail.
+* Future storage components can be added without changing the external database-directory concept.
