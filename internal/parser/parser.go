@@ -37,7 +37,7 @@ func (p *Parser) ReadCommand() (string, string, string, error) {
 
 	var command, key, value string
 
-	command = parts[0]
+	command = strings.ToUpper(parts[0])
 	key = parts[1]
 	if len(parts) > 2 {
 		value = parts[2]
