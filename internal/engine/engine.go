@@ -16,6 +16,7 @@ type Engine struct {
 
 var ErrKeyNotFound = errors.New("key not found")
 var ErrUnsupportedCommand = errors.New("unsupported command")
+var ErrStorageFailure = errors.New("storage failure")
 
 func NewEngine(path string) (*Engine, error) {
 	w, err := wal.NewWAL(path)
@@ -75,7 +76,7 @@ func (engine *Engine) set(key, value string) error {
 	}
 
 	if err := wal.Append(engine.wal, setOp); err != nil {
-		return fmt.Errorf("wal append: %w", err)
+		return fmt.Errorf("%w: wal append: %w", ErrStorageFailure, err)
 	}
 
 	engine.applyOperation(setOp)
@@ -94,7 +95,7 @@ func (engine *Engine) delete(key string) error {
 	}
 
 	if err := wal.Append(engine.wal, deleteOp); err != nil {
-		return fmt.Errorf("wal append: %w", err)
+		return fmt.Errorf("%w: wal append: %w", ErrStorageFailure, err)
 	}
 
 	engine.applyOperation(deleteOp)
