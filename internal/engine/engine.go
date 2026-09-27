@@ -47,6 +47,22 @@ func (engine *Engine) Close() error {
 	return engine.wal.Close()
 }
 
+func (engine *Engine) Execute(command, key, value string) (string, error) {
+	switch command {
+	case "SET":
+		return "", engine.set(key, value)
+
+	case "GET":
+		return engine.get(key)
+
+	case "DELETE":
+		return "", engine.delete(key)
+
+	default:
+		return "", ErrUnsupportedCommand
+	}
+}
+
 func (engine *Engine) set(key, value string) error {
 	setOp := operation.Operation{
 		OpType: operation.Set,
