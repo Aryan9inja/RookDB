@@ -19,14 +19,14 @@ func TestParser_ReadCommand(t *testing.T) {
 		{
 			name:        "valid command with 3 parts",
 			input:       "Set name Aryan\n",
-			expectedCmd: "Set",
+			expectedCmd: "SET",
 			expectedKey: "name",
 			expectedVal: "Aryan",
 		},
 		{
 			name:        "valid command with EOF and no trailing newline",
 			input:       "Set name Aryan", // No \n at the end
-			expectedCmd: "Set",
+			expectedCmd: "SET",
 			expectedKey: "name",
 			expectedVal: "Aryan",
 		},
@@ -74,7 +74,7 @@ func TestParser_ReadCommand(t *testing.T) {
 		if err1 != nil {
 			t.Fatalf("unexpected error on command 1: %v", err1)
 		}
-		if cmd1 != "Set" || key1 != "name" || val1 != "Aryan" {
+		if cmd1 != "SET" || key1 != "name" || val1 != "Aryan" {
 			t.Errorf("command 1 failed: got (%q, %q, %q)", cmd1, key1, val1)
 		}
 
@@ -83,7 +83,7 @@ func TestParser_ReadCommand(t *testing.T) {
 		if err2 != nil {
 			t.Fatalf("unexpected error on command 2: %v", err2)
 		}
-		if cmd2 != "Get" || key2 != "name" || val2 != "" {
+		if cmd2 != "GET" || key2 != "name" || val2 != "" {
 			t.Errorf("command 2 failed: got (%q, %q, %q)", cmd2, key2, val2)
 		}
 
