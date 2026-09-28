@@ -12,12 +12,12 @@ The goal is not to build another production-ready database, but to progressively
 
 RookDB is built around a few principles:
 
-* Build systems from first principles instead of hiding complexity behind libraries.
-* Understand **why** database components exist, not just how to implement them.
-* Make durability and failure handling explicit design concerns.
-* Keep components small and independently understandable.
-* Document design decisions, invariants, tradeoffs, and failure assumptions alongside the implementation.
-* Progress from a simple local database toward distributed-system concepts.
+- Build systems from first principles instead of hiding complexity behind libraries.
+- Understand **why** database components exist, not just how to implement them.
+- Make durability and failure handling explicit design concerns.
+- Keep components small and independently understandable.
+- Document design decisions, invariants, tradeoffs, and failure assumptions alongside the implementation.
+- Progress from a simple local database toward distributed-system concepts.
 
 ---
 
@@ -27,20 +27,20 @@ RookDB is built around a few principles:
 
 The first version of RookDB provides a persistent key-value database with:
 
-* Interactive command-line interface
-* `SET`, `GET`, and `DELETE` operations
-* In-memory materialized state
-* Write-Ahead Log (WAL)
-* Durable WAL writes using filesystem synchronization
-* Length-prefixed WAL records
-* CRC32 integrity checks
-* WAL recovery after restart
-* Detection of incomplete/corrupted WAL records
-* Automatic truncation of invalid WAL tails
-* Operation validation during recovery
-* Persistent database data directory
-* Clean database shutdown
-* Unit tests covering normal operation and WAL corruption cases
+- Interactive command-line interface
+- `SET`, `GET`, and `DELETE` operations
+- In-memory materialized state
+- Write-Ahead Log (WAL)
+- Durable WAL writes using filesystem synchronization
+- Length-prefixed WAL records
+- CRC32 integrity checks
+- WAL recovery after restart
+- Detection of incomplete/corrupted WAL records
+- Automatic truncation of invalid WAL tails
+- Operation validation during recovery
+- Persistent database data directory
+- Clean database shutdown
+- Unit tests covering normal operation and WAL corruption cases
 
 The v1 storage model is intentionally simple:
 
@@ -70,49 +70,49 @@ RookDB will evolve incrementally from a simple persistent key-value store into a
 
 ### Phase 1 — Persistent Storage
 
-* [x] Basic key-value operations
-* [x] Write-Ahead Log
-* [x] Durable writes
-* [x] WAL recovery
-* [x] Corruption detection
-* [x] WAL tail truncation
+- [x] Basic key-value operations
+- [x] Write-Ahead Log
+- [x] Durable writes
+- [x] WAL recovery
+- [x] Corruption detection
+- [x] WAL tail truncation
 
 ### Phase 2 — LSM Storage Engine
 
-* [ ] Memtable
-* [ ] SSTables
-* [ ] Immutable memtables
-* [ ] Flush pipeline
-* [ ] Compaction
-* [ ] Bloom filters
-* [ ] Snapshots
+- [ ] Memtable
+- [ ] SSTables
+- [ ] Immutable memtables
+- [ ] Flush pipeline
+- [ ] Compaction
+- [ ] Bloom filters
+- [ ] Snapshots
 
 ### Phase 3 — Crash Recovery & Reliability
 
-* [ ] Improved recovery model
-* [ ] Snapshot-based recovery
-* [ ] Fault injection
-* [ ] Recovery testing
-* [ ] Performance benchmarks
+- [ ] Improved recovery model
+- [ ] Snapshot-based recovery
+- [ ] Fault injection
+- [ ] Recovery testing
+- [ ] Performance benchmarks
 
 ### Phase 4 — Distributed RookDB
 
-* [ ] Node-to-node communication
-* [ ] Replication
-* [ ] Leader election
-* [ ] Raft consensus
-* [ ] Log replication
-* [ ] Fault recovery
-* [ ] Network failure handling
+- [ ] Node-to-node communication
+- [ ] Replication
+- [ ] Leader election
+- [ ] Raft consensus
+- [ ] Log replication
+- [ ] Fault recovery
+- [ ] Network failure handling
 
 ### Phase 5 — Advanced Features
 
-* [ ] Transactions
-* [ ] Concurrency
-* [ ] Metrics
-* [ ] Observability
-* [ ] Administrative tooling
-* [ ] Performance tuning
+- [ ] Transactions
+- [ ] Concurrency
+- [ ] Metrics
+- [ ] Observability
+- [ ] Administrative tooling
+- [ ] Performance tuning
 
 The roadmap is intentionally incremental. Each stage builds on concepts introduced by the previous one. Also, the roadmap is prone to change.
 
@@ -264,10 +264,10 @@ RookDB v1 uses the following record format:
 └───────────────┴───────────────┴───────────────┘
 ```
 
-* Length is stored as a big-endian `uint32`.
-* Payload is a serialized `Operation`.
-* CRC32 covers the length and payload.
-* The WAL is synchronized before a successful write is returned.
+- Length is stored as a big-endian `uint32`.
+- Payload is a serialized `Operation`.
+- CRC32 covers the length and payload.
+- The WAL is synchronized before a successful write is returned.
 
 During startup, RookDB sequentially scans the WAL and reconstructs the in-memory state.
 
@@ -366,15 +366,15 @@ Instead of starting with a feature-rich database and learning how to use it, Roo
 
 That means dealing with questions such as:
 
-* What does it actually mean for a write to be durable?
-* What happens if a process crashes halfway through a WAL record?
-* How do we detect corrupted data?
-* Where should recovery happen?
-* Which layer owns validation?
-* What should happen when the final WAL record is incomplete?
-* How does an in-memory state become persistent?
-* How does a single-node database evolve into a replicated system?
-* How do multiple machines agree on the same state?
+- What does it actually mean for a write to be durable?
+- What happens if a process crashes halfway through a WAL record?
+- How do we detect corrupted data?
+- Where should recovery happen?
+- Which layer owns validation?
+- What should happen when the final WAL record is incomplete?
+- How does an in-memory state become persistent?
+- How does a single-node database evolve into a replicated system?
+- How do multiple machines agree on the same state?
 
 The project is therefore as much about **systems engineering and reasoning about failure** as it is about writing Go code.
 
@@ -386,15 +386,15 @@ RookDB is being built one layer at a time, with the design decisions and tradeof
 
 The implementation is accompanied by a design document containing the reasoning behind major architectural decisions, including:
 
-* WAL format
-* Durability semantics
-* Recovery behavior
-* Record validation
-* Corruption handling
-* Truncation strategy
-* Component responsibilities
-* Failure assumptions
-* Design tradeoffs
+- WAL format
+- Durability semantics
+- Recovery behavior
+- Record validation
+- Corruption handling
+- Truncation strategy
+- Component responsibilities
+- Failure assumptions
+- Design tradeoffs
 
 See:
 
@@ -407,3 +407,53 @@ docs/design.md
 ## License
 
 Rook DB is licensed under Apache 2.0
+
+## Performance Baseline
+
+RookDB v1.0 was benchmarked before beginning the LSM-based storage engine work.
+
+The benchmarks measure the core `Engine` directly rather than going through the CLI, avoiding terminal I/O and command parsing overhead.
+
+### Environment
+
+- CPU: AMD Ryzen 5 5600H
+- Architecture: amd64
+- OS: Linux
+- Go: 1.27.x
+- Benchmark command:
+
+```bash
+go test ./internal/engine -bench=. -benchmem
+```
+
+### Results
+
+```
+Operation	  Time	            Memory	      Allocations
+
+SET         ~2.15 µs/op	        229 B/op	  5 allocs/op
+GET	        ~16.8 ns/op	         0 B/op	      0 allocs/op
+DELETE	    ~2.07 µs/delete	    194 B/op	  5 allocs/op
+```
+
+#### Workloads
+
+##### SET
+
+- 10,000 pre-generated key/value pairs
+- Keys and values are cycled through during the benchmark
+- Each operation is WAL-backed and synchronized to disk
+
+##### GET
+
+- 10,000 keys preloaded directly into the in-memory store
+- Keys are cycled through during the benchmark
+- No WAL operation is involved
+
+##### DELETE
+
+- Existing keys from a 10,000-key pool
+- Keys are repopulated outside the timed region
+- DELETE operations are WAL-backed and synchronized to disk
+
+These numbers are intended as a baseline for comparing future storage-engine implementations rather than as absolute performance claims.
