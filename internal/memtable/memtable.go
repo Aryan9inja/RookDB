@@ -17,3 +17,13 @@ type skipListNode struct {
 	value string
 	next  []*skipListNode
 }
+
+func newSkipList() *skipList {
+	h := &skipListNode{
+		next: make([]*skipListNode, MaxSkipListHeight),
+	}
+
+	return &skipList{
+		head: h,
+	}
+}
