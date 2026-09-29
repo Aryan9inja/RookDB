@@ -1,6 +1,8 @@
 package memtable
 
-import "math/rand"
+import (
+	"math/rand"
+)
 
 const MaxSkipListHeight = 20
 const MemTableFlushThreshold = 80 * 1024 * 1024 // 80 MiB
@@ -54,4 +56,17 @@ func (list *skipList) searchList(targetKey string) []*skipListNode {
 	}
 
 	return update
+}
+
+func (list *skipList) getValue(key string) (string, bool) {
+	update := list.searchList(key)
+
+	predecessor := update[0]
+	candidate := predecessor.next[0]
+
+	if candidate != nil && candidate.key == key {
+		return candidate.value, true
+	}
+
+	return "", false
 }
