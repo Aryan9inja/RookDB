@@ -1,5 +1,7 @@
 package memtable
 
+import "math/rand"
+
 const MaxSkipListHeight = 20
 const MemTableFlushThreshold = 80 * 1024 * 1024 // 80 MiB
 
@@ -26,4 +28,14 @@ func newSkipList() *skipList {
 	return &skipList{
 		head: h,
 	}
+}
+
+func randomHeight() int {
+	height := 1
+
+	for height < MaxSkipListHeight && rand.Intn(2) == 0 {
+		height++
+	}
+
+	return height
 }
