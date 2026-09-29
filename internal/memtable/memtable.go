@@ -70,3 +70,29 @@ func (list *skipList) getValue(key string) (string, bool) {
 
 	return "", false
 }
+
+func (list *skipList) putNode(k, v string) {
+	list.putNodeWithHeight(k, v, randomHeight())
+}
+
+func (list *skipList) putNodeWithHeight(k, v string, height int) {
+	update := list.searchList(k)
+
+	candidate := update[0].next[0]
+
+	if candidate != nil && candidate.key == k {
+		candidate.value = v
+		return
+	}
+
+	node := &skipListNode{
+		key:   k,
+		value: v,
+		next:  make([]*skipListNode, height),
+	}
+
+	for level := range height {
+		node.next[level] = update[level].next[level]
+		update[level].next[level] = node
+	}
+}
