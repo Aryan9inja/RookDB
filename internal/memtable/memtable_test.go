@@ -121,6 +121,69 @@ func TestSearchList(t *testing.T) {
 	})
 }
 
+func TestGetValue(t *testing.T) {
+	bat := newTestNode(t, "bat", "abc", 1)
+	cat := newTestNode(t, "cat", "xyz", 3)
+	pet := newTestNode(t, "pet", "ijk", 2)
+
+	// Generate skip list structure
+	list := newSkipList()
+	list.head.next[0] = bat
+	list.head.next[1] = cat
+	list.head.next[2] = cat
+
+	bat.next[0] = cat
+
+	cat.next[0] = pet
+	cat.next[1] = pet
+
+	t.Run("exisiting key", func(t *testing.T) {
+		expected := "abc"
+		got, ok := list.getValue("bat")
+
+		if got != expected || !ok {
+			t.Fatalf("expected %v and true, got %v and %v", expected, got, ok)
+		}
+	})
+
+	t.Run("target missing between keys", func(t *testing.T) {
+		expected := ""
+		got, ok := list.getValue("dog")
+
+		if got != expected || ok {
+			t.Fatalf("expected %v and false, got %v and %v", expected, got, ok)
+		}
+	})
+
+	t.Run("target missing before existing keys", func(t *testing.T) {
+		expected := ""
+		got, ok := list.getValue("aryan")
+
+		if got != expected || ok {
+			t.Fatalf("expected %v and false, got %v and %v", expected, got, ok)
+		}
+	})
+
+	t.Run("target missing after existing keys", func(t *testing.T) {
+		expected := ""
+		got, ok := list.getValue("thakur")
+
+		if got != expected || ok {
+			t.Fatalf("expected %v and false, got %v and %v", expected, got, ok)
+		}
+	})
+
+	t.Run("get value in empty list", func(t *testing.T) {
+		emptyList := newSkipList()
+		expected := ""
+		got, ok := emptyList.getValue("cat")
+
+		if got != expected || ok {
+			t.Fatalf("expected %v and false, got %v and %v", expected, got, ok)
+		}
+	})
+}
+
 func newTestNode(t *testing.T, key, value string, height int) *skipListNode {
 	t.Helper()
 	return &skipListNode{
