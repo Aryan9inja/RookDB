@@ -39,3 +39,19 @@ func randomHeight() int {
 
 	return height
 }
+
+// method to find nodes which are predecessor to targetKey at each level
+func (list *skipList) searchList(targetKey string) []*skipListNode {
+	update := make([]*skipListNode, MaxSkipListHeight)
+
+	current := list.head
+	for level := MaxSkipListHeight - 1; level >= 0; level-- {
+		for current.next[level] != nil && current.next[level].key < targetKey {
+			current = current.next[level]
+		}
+
+		update[level] = current
+	}
+
+	return update
+}
