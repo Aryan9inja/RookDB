@@ -7,8 +7,21 @@ import (
 const MaxSkipListHeight = 20
 const MemTableFlushThreshold = 80 * 1024 * 1024 // 80 MiB
 
+// string = 16 bytes - (data pointer,8) + (length,8)
+//
+// key   = 16 bytes
+// value = 16 bytes
+// next  = 24 bytes - (data pointer,8) + (length,8) + (capacity,8)
+//
+// 16 + 16 + 24 = 56 bytes
+const SkipListNodeOverhead = 56
+
 type MemTable struct {
-	list       *skipList
+	list *skipList
+
+	// approxSize estimates the logical memory footprint of the MemTable.
+	// It is intentionally approximate and is used only as a flush heuristic,
+	// not as an exact measurement of process memory.
 	approxSize int64
 }
 
@@ -53,7 +66,7 @@ func (m *MemTable) Iterator() *iterator {
 }
 
 func (it *iterator) Next() bool {
-	if it.current==nil || it.current.next[0] == nil {
+	if it.current == nil || it.current.next[0] == nil {
 		it.current = nil
 		return false
 	}
@@ -102,16 +115,17 @@ func (list *skipList) getValue(key string) (string, bool) {
 	return "", false
 }
 
-func (list *skipList) putNode(k, v string) {
-	list.putNodeWithHeight(k, v, randomHeight())
+func (list *skipList) putNode(k, v string) int64 {
+	return list.putNodeWithHeight(k, v, randomHeight())
 }
 
-func (list *skipList) putNodeWithHeight(k, v string, height int) {
+func (list *skipList) putNodeWithHeight(k, v string, height int) (sizeDelta int64) {
 	update := list.searchList(k)
 
 	candidate := update[0].next[0]
 
 	if candidate != nil && candidate.key == k {
+		sizeDelta = int64(len(v) - len(candidate.value))
 		candidate.value = v
 		return
 	}
@@ -121,14 +135,17 @@ func (list *skipList) putNodeWithHeight(k, v string, height int) {
 		value: v,
 		next:  make([]*skipListNode, height),
 	}
+	sizeDelta = int64(SkipListNodeOverhead + len(k) + len(v) + 8*height)
 
 	for level := range height {
 		node.next[level] = update[level].next[level]
 		update[level].next[level] = node
 	}
+
+	return
 }
 
-func (list *skipList) deleteNode(k string) {
+func (list *skipList) deleteNode(k string) (sizeDelta int64) {
 	update := list.searchList(k)
 
 	candidate := update[0].next[0]
@@ -138,7 +155,11 @@ func (list *skipList) deleteNode(k string) {
 	}
 
 	nextLevels := len(candidate.next)
+
+	sizeDelta = -int64(SkipListNodeOverhead + len(candidate.key) + len(candidate.value) + 8*nextLevels)
+
 	for level := range nextLevels {
 		update[level].next[level] = candidate.next[level]
 	}
+	return
 }
