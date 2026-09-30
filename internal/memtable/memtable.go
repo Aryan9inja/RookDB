@@ -59,6 +59,30 @@ func randomHeight() int {
 	return height
 }
 
+func NewMemTable() *MemTable {
+	// head size in skip list
+	sentinelOverhead := int64(SkipListNodeOverhead + 8*MaxSkipListHeight)
+
+	return &MemTable{
+		list:       newSkipList(),
+		approxSize: sentinelOverhead,
+	}
+}
+
+func (mTable *MemTable) Put(key, value string) {
+	sizeDelta := mTable.list.putNode(key, value)
+	mTable.approxSize += sizeDelta
+}
+
+func (mTable *MemTable) Get(key string) (string, bool) {
+	return mTable.list.getValue(key)
+}
+
+func (mTable *MemTable) Delete(key string) {
+	sizeDelta := mTable.list.deleteNode(key)
+	mTable.approxSize += sizeDelta
+}
+
 func (m *MemTable) Iterator() *iterator {
 	return &iterator{
 		current: m.list.head,
