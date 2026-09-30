@@ -12,6 +12,10 @@ type MemTable struct {
 	approxSize int64
 }
 
+type iterator struct {
+	current *skipListNode
+}
+
 type skipList struct {
 	head *skipListNode
 }
@@ -40,6 +44,33 @@ func randomHeight() int {
 	}
 
 	return height
+}
+
+func (m *MemTable) Iterator() *iterator {
+	return &iterator{
+		current: m.list.head,
+	}
+}
+
+func (it *iterator) Next() bool {
+	if it.current==nil || it.current.next[0] == nil {
+		it.current = nil
+		return false
+	}
+
+	// move one step
+	it.current = it.current.next[0]
+	return true
+}
+
+// will panic if Iterator.Next() returned false
+func (it *iterator) Key() string {
+	return it.current.key
+}
+
+// will panic if Iterator.Next() returned false
+func (it *iterator) Value() string {
+	return it.current.value
 }
 
 // method to find nodes which are predecessor to targetKey at each level
