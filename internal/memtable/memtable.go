@@ -96,3 +96,18 @@ func (list *skipList) putNodeWithHeight(k, v string, height int) {
 		update[level].next[level] = node
 	}
 }
+
+func (list *skipList) deleteNode(k string) {
+	update := list.searchList(k)
+
+	candidate := update[0].next[0]
+	if candidate == nil || candidate.key != k {
+		// no op
+		return
+	}
+
+	nextLevels := len(candidate.next)
+	for level := range nextLevels {
+		update[level].next[level] = candidate.next[level]
+	}
+}
