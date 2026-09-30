@@ -338,6 +338,81 @@ func TestPutNode(t *testing.T) {
 	})
 }
 
+func TestDeleteNode(t *testing.T) {
+	t.Run("delete existing key", func(t *testing.T) {
+		list := newSkipList()
+		list.putNode("name", "aryan")
+
+		list.deleteNode("name")
+
+		for level := range MaxSkipListHeight {
+			if list.head.next[level] != nil {
+				t.Fatalf("expected head's next to be nil, got %v at level %d", list.head.next[level], level)
+			}
+		}
+	})
+
+	t.Run("delete non existent key", func(t *testing.T) {
+		list := newSkipList()
+		list.putNodeWithHeight("name", "aryan", MaxSkipListHeight)
+
+		list.deleteNode("xyz")
+
+		for level := range MaxSkipListHeight {
+			if list.head.next[level].key != "name" {
+				t.Fatalf("expected key - name to exist but it is not existing at level - %d", level)
+			}
+		}
+	})
+
+	t.Run("delete multi level node", func(t *testing.T) {
+		list := newSkipList()
+
+		list.putNodeWithHeight("ant", "0", 1)
+		list.putNodeWithHeight("cat", "2", 4)
+		list.putNodeWithHeight("dog", "3", 2)
+
+		list.deleteNode("cat")
+
+		for level := range MaxSkipListHeight {
+			node := list.head.next[level]
+
+			for node != nil {
+				if node.key == "cat" {
+					t.Fatalf("cat still exists at level %d", level)
+				}
+				node = node.next[level]
+			}
+		}
+	})
+
+	t.Run("deletion preserves sorted order", func(t *testing.T) {
+		list := newSkipList()
+		inserts := []struct{ key, value string }{
+			{"pet", "3"},
+			{"bat", "1"},
+			{"cat", "2"},
+			{"ant", "0"},
+			{"zoo", "4"},
+		}
+		for _, item := range inserts {
+			list.putNode(item.key, item.value)
+		}
+
+		// delete some keys
+		list.deleteNode("bat")
+		list.deleteNode("pet")
+
+		var keys []string
+		for node := list.head.next[0]; node != nil; node = node.next[0] {
+			keys = append(keys, node.key)
+		}
+		if !slices.Equal(keys, []string{"ant", "cat", "zoo"}) {
+			t.Fatalf("expected sorted unique keys [ant cat zoo], got %v", keys)
+		}
+	})
+}
+
 func newTestNode(t *testing.T, key, value string, height int) *skipListNode {
 	t.Helper()
 	return &skipListNode{
