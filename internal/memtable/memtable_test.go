@@ -5,6 +5,100 @@ import (
 	"testing"
 )
 
+func TestIterator(t *testing.T) {
+	t.Run("empty MemTable", func(t *testing.T) {
+		memT := MemTable{list: newSkipList()}
+
+		it := memT.Iterator()
+
+		if it.Next() {
+			t.Fatalf("expected Next() to return false but got true")
+		}
+	})
+
+	t.Run("single element", func(t *testing.T) {
+		memT := MemTable{list: newSkipList()}
+		memT.list.putNode("name", "aryan")
+
+		it := memT.Iterator()
+
+		if !it.Next() {
+			t.Fatalf("expected Next() to return true but got false")
+		}
+
+		key := it.Key()
+		value := it.Value()
+		if key != "name" || value != "aryan" {
+			t.Fatalf("expected key-value to be name-aryan, got %v-%v", key, value)
+		}
+
+		if it.Next() {
+			t.Fatalf("expected Next() to return false but got true")
+		}
+	})
+
+	t.Run("multiple elements in sorted order", func(t *testing.T) {
+		memT := MemTable{list: newSkipList()}
+		memT.list.putNode("pet", "3")
+		memT.list.putNode("bat", "1")
+		memT.list.putNode("cat", "2")
+
+		expected := []struct{ key, value string }{
+			{"bat", "1"},
+			{"cat", "2"},
+			{"pet", "3"},
+		}
+		it := memT.Iterator()
+		for _, item := range expected {
+			if !it.Next() {
+				t.Fatalf("expected Next() for %q to return true", item.key)
+			}
+			if got := it.Key(); got != item.key {
+				t.Fatalf("expected key %q, got %q", item.key, got)
+			}
+			if got := it.Value(); got != item.value {
+				t.Fatalf("expected value %q, got %q", item.value, got)
+			}
+		}
+	})
+
+	t.Run("exhaustion", func(t *testing.T) {
+		memT := MemTable{list: newSkipList()}
+		memT.list.putNode("bat", "1")
+		memT.list.putNode("cat", "2")
+
+		it := memT.Iterator()
+		if !it.Next() {
+			t.Fatal("expected first Next() to return true")
+		}
+		if !it.Next() {
+			t.Fatal("expected second Next() to return true")
+		}
+		if it.Next() {
+			t.Fatal("expected Next() to return false after consuming all elements")
+		}
+	})
+
+	t.Run("repeated Next() after exhaustion", func(t *testing.T) {
+		memT := MemTable{list: newSkipList()}
+		memT.list.putNode("name", "aryan")
+
+		it := memT.Iterator()
+		if !it.Next() {
+			t.Fatal("expected Next() to return true for the element")
+		}
+		if it.Next() {
+			t.Fatal("expected Next() to return false after consuming the element")
+		}
+		if it.Next() {
+			t.Fatal("expected repeated Next() after exhaustion to return false")
+		}
+		if it.Next() {
+			t.Fatal("expected subsequent Next() after exhaustion to return false")
+		}
+	})
+}
+
 func TestSearchList(t *testing.T) {
 	// Skip list nodes
 	bat := newTestNode(t, "bat", "xyz", 1)
