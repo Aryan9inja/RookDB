@@ -104,15 +104,15 @@ func nodesEqual(a, b *skipListNode) bool {
 	if a == b {
 		return true
 	}
-	
+
 	if a == nil || b == nil {
 		return false
 	}
-	
+
 	if a.listEntry == nil || b.listEntry == nil {
 		return false
 	}
-	
+
 	return a.listEntry.key == b.listEntry.key
 }
 
@@ -225,47 +225,57 @@ func TestGetValue(t *testing.T) {
 
 	t.Run("exisiting key", func(t *testing.T) {
 		expected := "abc"
-		got, ok := list.getValue("bat")
+		got, gotType, ok := list.getNode("bat")
 
-		if got != expected || !ok {
-			t.Fatalf("expected %v and true, got %v and %v", expected, got, ok)
+		if got != expected || gotType != setEntry || !ok {
+			t.Fatalf("expected %v, type %v, and true; got %v, type %v, and %v", expected, setEntry, got, gotType, ok)
 		}
 	})
 
 	t.Run("target missing between keys", func(t *testing.T) {
 		expected := ""
-		got, ok := list.getValue("dog")
+		got, gotType, ok := list.getNode("dog")
 
-		if got != expected || ok {
-			t.Fatalf("expected %v and false, got %v and %v", expected, got, ok)
+		if got != expected || gotType != 0 || ok {
+			t.Fatalf("expected %v, type 0, and false; got %v, type %v, and %v", expected, got, gotType, ok)
 		}
 	})
 
 	t.Run("target missing before existing keys", func(t *testing.T) {
 		expected := ""
-		got, ok := list.getValue("aryan")
+		got, gotType, ok := list.getNode("aryan")
 
-		if got != expected || ok {
-			t.Fatalf("expected %v and false, got %v and %v", expected, got, ok)
+		if got != expected || gotType != 0 || ok {
+			t.Fatalf("expected %v, type 0, and false; got %v, type %v, and %v", expected, got, gotType, ok)
 		}
 	})
 
 	t.Run("target missing after existing keys", func(t *testing.T) {
 		expected := ""
-		got, ok := list.getValue("thakur")
+		got, gotType, ok := list.getNode("thakur")
 
-		if got != expected || ok {
-			t.Fatalf("expected %v and false, got %v and %v", expected, got, ok)
+		if got != expected || gotType != 0 || ok {
+			t.Fatalf("expected %v, type 0, and false; got %v, type %v, and %v", expected, got, gotType, ok)
 		}
 	})
 
 	t.Run("get value in empty list", func(t *testing.T) {
 		emptyList := newSkipList()
 		expected := ""
-		got, ok := emptyList.getValue("cat")
+		got, gotType, ok := emptyList.getNode("cat")
 
-		if got != expected || ok {
-			t.Fatalf("expected %v and false, got %v and %v", expected, got, ok)
+		if got != expected || gotType != 0 || ok {
+			t.Fatalf("expected %v, type 0, and false; got %v, type %v, and %v", expected, got, gotType, ok)
+		}
+	})
+
+	t.Run("deleted key returns delete entry type", func(t *testing.T) {
+		list := newSkipList()
+		list.putNode(deleteEntry, "bat", "")
+
+		got, gotType, ok := list.getNode("bat")
+		if got != "" || gotType != deleteEntry || !ok {
+			t.Fatalf("expected empty value, type %v, and true; got %q, type %v, and %v", deleteEntry, got, gotType, ok)
 		}
 	})
 }
@@ -274,15 +284,15 @@ func TestPutNode(t *testing.T) {
 	t.Run("insert to empty list, SET", func(t *testing.T) {
 		emptyList := newSkipList()
 
-		delta:=emptyList.putNode(setEntry, "name", "aryan")
+		delta := emptyList.putNode(setEntry, "name", "aryan")
 
 		expected := "aryan"
-		got, ok := emptyList.getValue("name")
+		got, _, ok := emptyList.getNode("name")
 		if got != expected || !ok {
 			t.Fatalf("expected %v and true, got %v and %v", expected, got, ok)
 		}
 
-		if delta <= 0{
+		if delta <= 0 {
 			t.Fatalf("expected delta to be positive on new set operation")
 		}
 	})
@@ -293,12 +303,12 @@ func TestPutNode(t *testing.T) {
 		delta := emptyList.putNode(deleteEntry, "name", "aryan")
 
 		expected := "aryan"
-		got, ok := emptyList.getValue("name")
+		got, _, ok := emptyList.getNode("name")
 		if got != expected || !ok {
 			t.Fatalf("expected %v and true, got %v and %v", expected, got, ok)
 		}
 
-		if delta <= 0{
+		if delta <= 0 {
 			t.Fatalf("expected delta to be positive on new delete operation")
 		}
 	})
@@ -311,7 +321,7 @@ func TestPutNode(t *testing.T) {
 		list.putNode(setEntry, "ant", "first")
 
 		expected := "first"
-		got, ok := list.getValue("ant")
+		got, _, ok := list.getNode("ant")
 		if got != expected || !ok {
 			t.Fatalf("expected %v and true, got %v and %v", expected, got, ok)
 		}
@@ -328,7 +338,7 @@ func TestPutNode(t *testing.T) {
 		list.putNode(setEntry, "cat", "middle")
 
 		expected := "middle"
-		got, ok := list.getValue("cat")
+		got, _, ok := list.getNode("cat")
 		if got != expected || !ok {
 			t.Fatalf("expected %v and true, got %v and %v", expected, got, ok)
 		}
@@ -355,7 +365,7 @@ func TestPutNode(t *testing.T) {
 		list.putNode(setEntry, "zoo", "last")
 
 		expected := "last"
-		got, ok := list.getValue("zoo")
+		got, _, ok := list.getNode("zoo")
 		if got != expected || !ok {
 			t.Fatalf("expected %v and true, got %v and %v", expected, got, ok)
 		}
@@ -377,7 +387,7 @@ func TestPutNode(t *testing.T) {
 		delta := list.putNode(setEntry, "cat", "newVal")
 
 		expected := "newVal"
-		got, ok := list.getValue("cat")
+		got, _, ok := list.getNode("cat")
 		if got != expected || !ok {
 			t.Fatalf("expected %v and true, got %v and %v", expected, got, ok)
 		}
@@ -385,7 +395,7 @@ func TestPutNode(t *testing.T) {
 			t.Fatal("updating a key should change its value without inserting another node")
 		}
 
-		if delta <= 0{
+		if delta <= 0 {
 			t.Fatalf("expected delta to be positive for bigger value")
 		}
 	})
@@ -398,7 +408,7 @@ func TestPutNode(t *testing.T) {
 		delta := list.putNode(deleteEntry, "cat", "")
 
 		expected := ""
-		got, ok := list.getValue("cat")
+		got, _, ok := list.getNode("cat")
 		if got != expected || !ok {
 			t.Fatalf("expected %v and true, got %v and %v", expected, got, ok)
 		}
@@ -406,7 +416,7 @@ func TestPutNode(t *testing.T) {
 			t.Fatal("updating a key should change its value without inserting another node")
 		}
 
-		if delta >= 0{
+		if delta >= 0 {
 			t.Fatalf("expected delta to be negative for delete operation")
 		}
 	})
@@ -419,7 +429,7 @@ func TestPutNode(t *testing.T) {
 		delta := list.putNode(setEntry, "cat", "new")
 
 		expected := "new"
-		got, ok := list.getValue("cat")
+		got, _, ok := list.getNode("cat")
 		if got != expected || !ok {
 			t.Fatalf("expected %v and true, got %v and %v", expected, got, ok)
 		}
@@ -427,7 +437,7 @@ func TestPutNode(t *testing.T) {
 			t.Fatal("updating a key should change its value without inserting another node")
 		}
 
-		if delta <= 0{
+		if delta <= 0 {
 			t.Fatalf("expected delta to be negative for set after delete operation")
 		}
 	})
@@ -440,7 +450,7 @@ func TestPutNode(t *testing.T) {
 		delta := list.putNode(deleteEntry, "cat", "")
 
 		expected := ""
-		got, ok := list.getValue("cat")
+		got, _, ok := list.getNode("cat")
 		if got != expected || !ok {
 			t.Fatalf("expected %v and true, got %v and %v", expected, got, ok)
 		}
@@ -448,7 +458,7 @@ func TestPutNode(t *testing.T) {
 			t.Fatal("updating a key should change its value without inserting another node")
 		}
 
-		if delta != 0{
+		if delta != 0 {
 			t.Fatalf("expected delta to be zero for delete after delete operation")
 		}
 	})
@@ -504,7 +514,7 @@ func TestPutNode(t *testing.T) {
 		}
 
 		expected := "updated"
-		got, ok := list.getValue("cat")
+		got, _, ok := list.getNode("cat")
 		if got != expected || !ok {
 			t.Fatalf("expected %v and true, got %v and %v", expected, got, ok)
 		}
