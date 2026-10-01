@@ -4,7 +4,7 @@ import (
 	"math/rand"
 )
 
-const MaxSkipListHeight = 20
+const maxSkipListHeight = 20
 const MemTableFlushThreshold = 80 * 1024 * 1024 // 80 MiB
 
 // string = 16 bytes - (data pointer,8) + (length,8)
@@ -14,7 +14,9 @@ const MemTableFlushThreshold = 80 * 1024 * 1024 // 80 MiB
 // next  = 24 bytes - (data pointer,8) + (length,8) + (capacity,8)
 //
 // 16 + 16 + 24 = 56 bytes
-const SkipListNodeOverhead = 56
+//
+// 2 more bytes for uint8 entry type
+const skipListNodeOverhead = 58
 
 type MemTable struct {
 	list *skipList
@@ -34,14 +36,26 @@ type skipList struct {
 }
 
 type skipListNode struct {
+	listEntry *entry
+	next      []*skipListNode
+}
+
+type entry struct {
 	key   string
 	value string
-	next  []*skipListNode
+	eType entryType
 }
+
+type entryType uint8
+
+const (
+	setEntry    entryType = 0x01
+	deleteEntry entryType = 0x02
+)
 
 func newSkipList() *skipList {
 	h := &skipListNode{
-		next: make([]*skipListNode, MaxSkipListHeight),
+		next: make([]*skipListNode, maxSkipListHeight),
 	}
 
 	return &skipList{
@@ -52,7 +66,7 @@ func newSkipList() *skipList {
 func randomHeight() int {
 	height := 1
 
-	for height < MaxSkipListHeight && rand.Intn(2) == 0 {
+	for height < maxSkipListHeight && rand.Intn(2) == 0 {
 		height++
 	}
 
@@ -61,7 +75,7 @@ func randomHeight() int {
 
 func NewMemTable() *MemTable {
 	// head size in skip list
-	sentinelOverhead := int64(SkipListNodeOverhead + 8*MaxSkipListHeight)
+	sentinelOverhead := int64(skipListNodeOverhead + 8*maxSkipListHeight)
 
 	return &MemTable{
 		list:       newSkipList(),
@@ -70,7 +84,7 @@ func NewMemTable() *MemTable {
 }
 
 func (mTable *MemTable) Put(key, value string) {
-	sizeDelta := mTable.list.putNode(key, value)
+	sizeDelta := mTable.list.putNode(setEntry, key, value)
 	mTable.approxSize += sizeDelta
 }
 
@@ -79,7 +93,7 @@ func (mTable *MemTable) Get(key string) (string, bool) {
 }
 
 func (mTable *MemTable) Delete(key string) {
-	sizeDelta := mTable.list.deleteNode(key)
+	sizeDelta := mTable.list.putNode(deleteEntry, key, "")
 	mTable.approxSize += sizeDelta
 }
 
@@ -102,21 +116,21 @@ func (it *iterator) Next() bool {
 
 // will panic if Iterator.Next() returned false
 func (it *iterator) Key() string {
-	return it.current.key
+	return it.current.listEntry.key
 }
 
 // will panic if Iterator.Next() returned false
 func (it *iterator) Value() string {
-	return it.current.value
+	return it.current.listEntry.value
 }
 
 // method to find nodes which are predecessor to targetKey at each level
 func (list *skipList) searchList(targetKey string) []*skipListNode {
-	update := make([]*skipListNode, MaxSkipListHeight)
+	update := make([]*skipListNode, maxSkipListHeight)
 
 	current := list.head
-	for level := MaxSkipListHeight - 1; level >= 0; level-- {
-		for current.next[level] != nil && current.next[level].key < targetKey {
+	for level := maxSkipListHeight - 1; level >= 0; level-- {
+		for current.next[level] != nil && current.next[level].listEntry.key < targetKey {
 			current = current.next[level]
 		}
 
@@ -132,58 +146,66 @@ func (list *skipList) getValue(key string) (string, bool) {
 	predecessor := update[0]
 	candidate := predecessor.next[0]
 
-	if candidate != nil && candidate.key == key {
-		return candidate.value, true
+	if candidate != nil && candidate.listEntry.key == key {
+		return candidate.listEntry.value, true
 	}
 
 	return "", false
 }
 
-func (list *skipList) putNode(k, v string) int64 {
-	return list.putNodeWithHeight(k, v, randomHeight())
+func (list *skipList) putNode(t entryType, k, v string) int64 {
+	return list.putNodeWithHeight(t, k, v, randomHeight())
 }
 
-func (list *skipList) putNodeWithHeight(k, v string, height int) (sizeDelta int64) {
+func (list *skipList) putNodeWithHeight(t entryType, k, v string, height int) (sizeDelta int64) {
 	update := list.searchList(k)
 
 	candidate := update[0].next[0]
 
-	if candidate != nil && candidate.key == k {
-		sizeDelta = int64(len(v) - len(candidate.value))
-		candidate.value = v
+	if candidate != nil && candidate.listEntry.key == k {
+		old := candidate.listEntry
+
+		// SET -> DELETE && DELETE -> DELETE
+		if t == deleteEntry {
+			if old.eType == setEntry {
+				sizeDelta = -int64(len(old.value))
+				old.value = ""
+				old.eType = deleteEntry
+			}
+			return
+		}
+
+		// SET -> SET
+		if old.eType == setEntry {
+			sizeDelta = int64(len(v) - len(old.value))
+			old.value = v
+			return
+		}
+
+		// DELETE → SET
+		sizeDelta = int64(len(v))
+		old.value = v
+		old.eType = setEntry
 		return
 	}
 
-	node := &skipListNode{
+	// new node to be added
+	entry := &entry{
 		key:   k,
 		value: v,
-		next:  make([]*skipListNode, height),
+		eType: t,
 	}
-	sizeDelta = int64(SkipListNodeOverhead + len(k) + len(v) + 8*height)
+
+	node := &skipListNode{
+		listEntry: entry,
+		next:      make([]*skipListNode, height),
+	}
+	sizeDelta = int64(skipListNodeOverhead + len(k) + len(v) + 8*height)
 
 	for level := range height {
 		node.next[level] = update[level].next[level]
 		update[level].next[level] = node
 	}
 
-	return
-}
-
-func (list *skipList) deleteNode(k string) (sizeDelta int64) {
-	update := list.searchList(k)
-
-	candidate := update[0].next[0]
-	if candidate == nil || candidate.key != k {
-		// no op
-		return
-	}
-
-	nextLevels := len(candidate.next)
-
-	sizeDelta = -int64(SkipListNodeOverhead + len(candidate.key) + len(candidate.value) + 8*nextLevels)
-
-	for level := range nextLevels {
-		update[level].next[level] = candidate.next[level]
-	}
 	return
 }
