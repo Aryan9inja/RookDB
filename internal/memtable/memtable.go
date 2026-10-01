@@ -88,8 +88,8 @@ func (mTable *MemTable) Put(key, value string) {
 	mTable.approxSize += sizeDelta
 }
 
-func (mTable *MemTable) Get(key string) (string, bool) {
-	return mTable.list.getValue(key)
+func (mTable *MemTable) Get(key string) (string, entryType, bool) {
+    return mTable.list.getNode(key)
 }
 
 func (mTable *MemTable) Delete(key string) {
@@ -140,17 +140,17 @@ func (list *skipList) searchList(targetKey string) []*skipListNode {
 	return update
 }
 
-func (list *skipList) getValue(key string) (string, bool) {
+func (list *skipList) getNode(key string) (string, entryType, bool) {
 	update := list.searchList(key)
 
 	predecessor := update[0]
 	candidate := predecessor.next[0]
 
 	if candidate != nil && candidate.listEntry.key == key {
-		return candidate.listEntry.value, true
+		return candidate.listEntry.value, candidate.listEntry.eType, true
 	}
 
-	return "", false
+	return "", 0, false
 }
 
 func (list *skipList) putNode(t entryType, k, v string) int64 {
