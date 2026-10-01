@@ -1601,3 +1601,408 @@ may participate in recovery
 
 The footer therefore serves as the durable boundary between an SSTable that is
 still being constructed and one that RookDB may treat as persistent state.
+
+## New Locked format for SSTable
+```
+SSTable
+│
+├── Data Blocks
+│   └── [BLOCK_LEN:uint32][BLOCK_DATA][CRC32:uint32]
+│
+├── Sparse Index
+│   └── [KEY_LEN:uint16][KEY][BLOCK_OFFSET:uint64]
+│
+├── Sparse Index CRC32
+│
+├── Footer
+│   ├── MAGIC
+│   ├── INDEX_OFFSET:uint64
+│   └── INDEX_SIZE:uint64
+│
+└── Footer CRC32
+```
+
+Record format is also updated:
+```
+[TYPE:uint8]
+[KEY_LEN:uint16]
+[VALUE_LEN:uint16]
+[KEY_BYTES]
+[VALUE_BYTES]
+```
+
+with types:
+```
+SET    = 0x01
+DELETE = 0x02
+```
+
+### DELETE SEMANTICS
+When we want to delete a value which is not the part of MemTable
+We will Set it in MemTable
+
+A DELETE has VALUE_LEN = 0.
+
+The important semantic rule is:
+```
+newest SSTable → oldest SSTable
+
+SET       → definitive result
+DELETE    → definitive "not found"
+absent    → continue searching older SSTable
+```
+
+## MemTable Entry Model & Tombstones
+Why the original model was insufficient
+
+The initial MemTable was designed around a simple key-value model:
+```
+key → value
+```
+
+This worked while the MemTable only represented live values.
+
+However, an LSM tree cannot physically remove a key when a DELETE occurs.
+
+Consider:
+```
+Older SSTable:
+    user:42 → "Aryan"
+
+Current MemTable:
+    user:42 → [removed]
+```
+
+If the MemTable simply removed the key, flushing it would produce no record for `user:42`. During a lookup, the older SSTable could then return `"Aryan"` again.
+
+This is known as resurrection of deleted data.
+
+Therefore, a DELETE must itself become persistent state.
+
+### Entry abstraction
+The fundamental logical record stored by the MemTable is now an Entry:
+```Go
+type Entry struct {
+    Type  EntryType
+    Key   string
+    Value string
+}
+```
+
+The entry type distinguishes between a live value and a tombstone:
+```Go
+type EntryType uint8
+
+const (
+    SetEntry    EntryType = 0x01
+    DeleteEntry EntryType = 0x02
+)
+```
+
+The semantics are:
+```
+SET:
+    Type  = SET
+    Key   = "user:42"
+    Value = "Aryan"
+
+DELETE:
+    Type  = DELETE
+    Key   = "user:42"
+    Value = ""
+```
+
+A DELETE entry is therefore a tombstone.
+
+The value is empty for a DELETE because the operation only needs to record that the key was explicitly deleted.
+
+### MemTable invariant
+The MemTable maintains:
+* At most one Entry exists for each key within a MemTable generation, and that Entry represents the latest operation for that key in that generation.
+
+For example:
+```
+SET A 1
+SET A 2
+DELETE A
+```
+
+results in:
+```
+A → DELETE
+```
+
+rather than three separate entries.
+
+The WAL still contains the mutation history, but the MemTable represents the latest materialized state.
+
+This gives the WAL and MemTable distinct responsibilities:
+```
+WAL
+ ↓
+mutation history
+
+MemTable
+ ↓
+latest state of each key in the current generation
+```
+
+### DELETE does not remove the Skip List node
+A DELETE operation must **not physically remove the key's node from the Skip List.**
+Instead:
+```
+Before:
+
+A → SET("hello")
+
+DELETE A
+
+After:
+
+A → DELETE
+```
+
+The node remains because the tombstone must eventually be flushed into an SSTable.
+
+This also means that the previous logical deleteNode() behavior is no longer appropriate for normal DELETE operations.
+
+The MemTable should instead have one logical entry-update path capable of handling both SET and DELETE.
+
+Conceptually:
+```
+apply Entry
+    │
+    ├── SET
+    │
+    └── DELETE
+```
+
+### Entry state transitions
+Every operation updates the existing Entry when the key is already present.
+
+
+| Existing state | New operation | Result |
+|---|---|---|
+| Absent | SET | Create `SET` Entry |
+| SET | SET | Update existing Entry's value |
+| Absent | DELETE | Create `DELETE` tombstone |
+| SET | DELETE | Change Entry type to `DELETE`, clear value |
+| DELETE | SET | Change Entry type to `SET`, assign new value |
+| DELETE | DELETE | No change |
+
+For example:
+```
+SET A 100
+    ↓
+A → SET("100")
+
+DELETE A
+    ↓
+A → DELETE
+
+SET A 200
+    ↓
+A → SET("200")
+```
+
+Two consecutive DELETE operations require no additional state change:
+```
+DELETE A
+DELETE A
+    ↓
+A → DELETE
+```
+
+### MemTable lookup semantics
+The previous lookup model:
+```
+Get(key) → (value, bool)
+```
+
+cannot distinguish between:
+```
+key is absent
+```
+
+and:
+```
+key exists as a tombstone
+```
+
+The lookup therefore becomes:
+```Go
+Get(key string) (value string, typ EntryType, ok bool)
+````
+
+The meaning of ok is:
+* ok == true means an Entry exists for the key.
+
+It does not mean that the key has a live value.
+
+Therefore:
+```
+Absent:
+    "",       0,      false
+
+SET:
+    "Aryan",  SET,    true
+
+DELETE:
+    "",       DELETE, true
+```
+
+This gives the storage engine the three states it needs:
+```
+             Entry?
+              │
+       ┌──────┴──────┐
+      no             yes
+      │               │
+    ABSENT       ┌────┴────┐
+                 │         │
+                SET      DELETE
+                 │         │
+              value     tombstone
+```
+
+### Memory accounting
+The existing approximate MemTable memory accounting can be extended naturally because the Skip List node remains allocated for both SET and DELETE.
+
+For a normal SET entry:
+```
+node overhead
++ key
++ value
++ next pointers
+```
+
+For a DELETE entry:
+```
+node overhead
++ key
++ next pointers
+```
+
+The value payload is the only part removed when transitioning:
+```
+SET → DELETE
+```
+
+Therefore:
+```
+SET → DELETE
+    sizeDelta = -len(oldValue)
+```
+
+The node overhead, key, and next-pointer storage remain unchanged.
+
+Conversely:
+```
+DELETE → SET
+    sizeDelta = +len(newValue)
+```
+
+And:
+```
+DELETE → DELETE
+    sizeDelta = 0
+```
+The complete accounting model is:
+| Transition | Approximate size delta |
+|---|---:|
+| Absent → SET | Node + key + value + pointers |
+| Absent → DELETE | Node + key + pointers |
+| SET → SET | `len(newValue) - len(oldValue)` |
+| SET → DELETE | `-len(oldValue)` |
+| DELETE → SET | `+len(newValue)` |
+| DELETE → DELETE | `0` |
+
+This preserves the existing philosophy of approxSize: it is an approximate logical memory footprint used as a flush heuristic, not an exact measurement of Go's runtime memory usage.
+
+### Direct translation to SSTables
+The Entry abstraction also aligns the MemTable naturally with the SSTable record format.
+
+The pipeline becomes:
+```
+Command
+   ↓
+Operation
+   ↓
+Entry
+   ↓
+MemTable
+   ↓
+SSTable Record
+```
+
+A SET entry:
+```
+Entry{
+    Type:  SET,
+    Key:   "user:42",
+    Value: "Aryan",
+}
+```
+
+becomes an SSTable SET record.
+
+A DELETE entry:
+```
+Entry{
+    Type:  DELETE,
+    Key:   "user:42",
+    Value: "",
+}
+```
+
+becomes an SSTable DELETE record:
+```
+[TYPE=DELETE]
+[KEY_LEN]
+[VALUE_LEN=0]
+[KEY_BYTES]
+```
+
+This means the SSTable writer does not need to invent a separate representation for deletion. It serializes the same logical Entry that the MemTable already stores.
+
+### Tombstones during SSTable lookup
+SSTables are searched from newest to oldest.
+
+Suppose:
+```
+SSTable-002 (newer)
+    user:42 → DELETE
+
+SSTable-001 (older)
+    user:42 → "Aryan"
+```
+
+Lookup proceeds:
+```
+SSTable-002
+    ↓
+user:42 → DELETE
+    ↓
+STOP
+    ↓
+return "not found"
+```
+
+The older SSTable must not be searched after finding the tombstone.
+
+If the key is absent from the newer SSTable entirely, lookup can continue to older SSTables.
+
+Therefore:
+```
+SET       → definitive value, stop
+DELETE    → definitive not-found, stop
+ABSENT    → continue searching older SSTables
+```
+
+This is what prevents deleted keys from being resurrected.
+
+### Resulting design invariant
+The key invariant introduced by this change is:
+* A DELETE is represented as a tombstone Entry in the MemTable and eventually as a DELETE record in an SSTable. Tombstones are never represented by physically removing the key from the MemTable.
+
+This preserves deletion semantics across MemTable flushes and multiple SSTables while allowing MemTable Entries to translate directly into SSTable records.
