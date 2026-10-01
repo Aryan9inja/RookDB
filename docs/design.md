@@ -811,3 +811,534 @@ The SSTables establish the persisted state that existed before the remaining WAL
 The WAL is then replayed to reconstruct the current mutable MemTable.
 
 The exact rules for WAL reclamation after a successful MemTable flush are intentionally deferred until SSTable durability and crash-consistency behavior are implemented.
+
+## SSTable Design
+
+### Overview
+
+RookDB v2 introduces SSTables (Sorted String Tables) as the persistent
+on-disk representation of flushed MemTables.
+
+The v1 storage model is:
+
+```
+WAL → Map
+```
+The v2 storage model becomes:
+```
+WAL → MemTable → SSTable
+```
+
+An SSTable is immutable once finalized. It stores sorted key/value records
+produced by flushing a MemTable.
+The primary goals of the initial SSTable design are:
+- sequential disk writes
+- immutable on-disk files
+- sorted records
+- efficient point lookups
+- corruption detection
+- bounded lookup work through sparse indexing
+- simple crash/finalization semantics
+
+This design is intentionally a v2 starting point. Parameters such as block
+size and memory assumptions can be refined empirically in v2.1.x.
+
+### 1. MemTable → SSTable Flush
+When a MemTable reaches its configured memory threshold, it is frozen and
+flushed to an SSTable.
+The active write path becomes conceptually:
+```
+SET
+ ↓
+WAL durable
+ ↓
+MemTable update
+ ↓
+MemTable reaches threshold
+ ↓
+freeze MemTable
+ ↓
+flush MemTable → SSTable
+ ↓
+create new MemTable
+```
+
+The MemTable is sorted through its Skip List, allowing the SSTable to be
+written sequentially without sorting the entire dataset again.
+
+The existing MemTable iterator provides the records in key order.
+
+### 2. SSTable Immutability
+An SSTable is immutable after it has been successfully finalized.
+
+During construction, records and metadata are written sequentially.
+
+Once the SSTable is finalized:
+- its data blocks are not modified
+- its sparse index is not modified
+- its footer is not modified
+
+Future updates to keys are represented by newer MemTables/SSTables rather
+than modifying an existing SSTable.
+
+### 3. Record Framing
+SSTable records use length-prefixed encoding.
+
+The record format is:
+```
+[KEY_LEN][VALUE_LEN][KEY_BYTES][VALUE_BYTES]
+```
+The exact integer widths/endian encoding are still to be finalized.
+
+Length-prefixed records were chosen instead of delimiter-based framing because
+keys and values may contain arbitrary content, including characters such as:
+```
+hello|world
+hello\nworld
+hello\0world
+```
+
+Therefore the record format must not depend on a special delimiter appearing
+only outside the payload.
+
+The lengths provide enough information for the reader to determine the exact
+boundaries of the key and value.
+
+### 4. Data Blocks
+An SSTable is divided into data blocks.
+
+A block contains multiple consecutive sorted records.
+
+The initial target is:
+```
+16 records per block
+```
+
+This is a tunable starting parameter rather than a permanent storage-format
+constraint.
+
+The approximate key/value payload assumption used elsewhere in the v2 design
+is around 128 bytes per record.
+
+Therefore:
+```
+16 × ~128 bytes ≈ 2 KiB
+```
+
+This makes it practical to buffer one complete block in memory before writing
+it to disk.
+
+The final block may contain fewer than 16 records.
+
+### 5. Block Buffering
+Blocks are constructed in memory before being written.
+
+The flush process is:
+```
+MemTable.Iterator()
+      ↓
+accumulate records
+      ↓
+16 records reached
+      ↓
+finalize block
+      ↓
+calculate BLOCK_LEN
+      ↓
+calculate CRC
+      ↓
+write block sequentially
+      ↓
+start next block
+```
+
+If the iterator reaches the end before 16 records are accumulated, the
+remaining records form the final block.
+
+Buffering a block avoids the need to know the final block length before the
+block has been constructed.
+
+It also avoids seeking backward to patch the block length after writing.
+
+Because the expected block size is only a few KiB, the additional memory
+overhead is considered acceptable.
+
+### 6. Block Framing
+The current block format is:
+```
+[BLOCK_LEN][BLOCK_DATA][CRC32]
+```
+
+Where:
+- BLOCK_LEN is the length of BLOCK_DATA only
+- BLOCK_DATA contains the serialized records
+- CRC32 is a fixed 4-byte checksum
+
+The CRC covers:
+```
+CRC32(BLOCK_DATA)
+```
+
+The block length does not include the CRC.
+
+This allows the reader to parse a block as:
+```
+read BLOCK_LEN
+    ↓
+read exactly BLOCK_LEN bytes
+    ↓
+read fixed 4-byte CRC
+    ↓
+verify CRC(BLOCK_DATA)
+    ↓
+parse records
+```
+
+The exact integer width/endian encoding of BLOCK_LEN remains to be finalized.
+
+### 7. Sorted Data
+Records within an SSTable are sorted by key.
+
+Because the MemTable already maintains sorted order through its Skip List,
+flushing does not require an additional sorting pass.
+
+This allows the SSTable writer to perform a sequential traversal:
+```
+MemTable
+   ↓
+Iterator
+   ↓
+Block 1
+   ↓
+Block 2
+   ↓
+Block 3
+   ↓
+...
+```
+
+Sorted data is necessary for efficient lookup using the sparse index.
+
+### 8. Sparse Index
+An SSTable maintains a sparse index containing one entry per data block.
+
+Each entry conceptually contains:
+```
+[first_key_of_block → block_offset]
+```
+
+For example:
+```
+"alice" → 0
+"bob"   → 2184
+"charlie" → 4312
+"dan"   → 6497
+```
+
+The block offset points to the beginning of the block framing, meaning the
+location where BLOCK_LEN is stored.
+
+The index allows lookup to avoid scanning the entire SSTable.
+
+Conceptually:
+```
+GET(key)
+   ↓
+binary search sparse index
+   ↓
+identify candidate block
+   ↓
+seek to block offset
+   ↓
+read block
+   ↓
+scan records within block
+```
+
+Since each block contains at most 16 records, the final scan is bounded by
+the configured block record count.
+
+### 9. Building the Sparse Index
+The sparse index is built while the SSTable is being written.
+
+Before writing each block, the writer already knows:
+1. the first key of the block
+2. the current file offset
+
+Therefore it can record:
+```
+firstKeyOfBlock → currentFileOffset
+```
+
+and then write the block.
+
+Conceptually:
+```
+current file offset ──────────┐
+                              ↓
+first key of block ───────→ sparse index
+                              ↓
+                    write [LEN][DATA][CRC]
+```
+
+The complete sparse index is kept in memory during the flush and written to
+disk after all data blocks have been written.
+
+This preserves sequential data-block writing.
+
+### 10. Why Not Reconstruct the Index by Seeking?
+An alternative would be to:
+1. write all data blocks
+2. seek back to the beginning of the SSTable
+3. read each block's length
+4. skip the block
+5. inspect the first record
+6. extract the first key
+7. reconstruct the sparse index
+
+This would require a second traversal of the SSTable and would require the
+index-building logic to parse enough of each block to discover its first key.
+
+The chosen design instead records the information during the original flush.
+
+Therefore the initial design uses:
+```
+single sequential data-writing pass
++
+in-memory sparse index construction
++
+one sequential index write
+```
+
+The additional memory required by the sparse index is considered acceptable.
+
+### 11. MemTable Memory Budget and Flush Overhead
+The initial MemTable flush threshold is:
+```
+80 MiB
+```
+
+The threshold is intentionally not treated as an exact measurement of process
+memory.
+
+During a flush, additional temporary memory may be required for:
+- the block buffer
+- sparse index entries
+- serialization buffers
+- other SSTable construction metadata
+
+The design therefore accepts some memory overhead beyond the MemTable's
+logical size.
+
+The current assumption is that this additional overhead is small enough to
+fit comfortably within the intended memory budget.
+
+The actual parameters will be refined using real workload measurements in
+v2.1.x.
+
+### 12. SSTable Footer
+The SSTable uses a footer at the end of the file.
+
+The footer acts as the finalization/commit marker for the SSTable.
+
+The reader can locate the footer from the end of the file because the footer
+has a fixed size.
+
+Conceptually:
+```
+file
+┌───────────────────────┐
+│ Data Block 1          │
+│ Data Block 2          │
+│ ...                   │
+│ Data Block N          │
+├───────────────────────┤
+│ Sparse Index          │
+├───────────────────────┤
+│ Footer                │
+└───────────────────────┘
+                         ↑
+                         EOF
+```
+
+The footer is expected to contain metadata required to locate structures such
+as the sparse index.
+
+The exact footer fields are not yet finalized.
+
+### 13. Footer Validation
+The footer will contain a magic value and version information so that RookDB
+can recognize the expected SSTable format before interpreting its metadata.
+
+The footer will also have integrity protection.
+
+Conceptually:
+```
+Footer
+├── Magic
+├── Version
+├── Index Offset
+├── Index Size
+├── ...
+└── CRC
+```
+
+The exact fields and checksum coverage remain to be finalized.
+
+The important design principle is:
+* An SSTable is considered valid only after its final footer has been
+successfully written and validated.
+
+A partially constructed SSTable must not be treated as a finalized SSTable
+during recovery.
+
+### 14. Crash Consistency
+A crash can occur while an SSTable is being constructed.
+
+For example:
+```
+write block 1
+write block 2
+write block 3
+      ↓
+    CRASH
+```
+
+The file may therefore contain partial data.
+
+The footer provides a finalization boundary.
+
+Conceptually:
+```
+data blocks
+   ↓
+sparse index
+   ↓
+footer
+   ↓
+SSTable becomes finalized
+```
+
+The existence of data bytes alone does not make an SSTable valid.
+
+The exact recovery/discovery procedure for partially written SSTables is
+still to be designed.
+
+### 15. Integrity Domains
+The current design uses checksums at multiple levels.
+
+Data blocks have their own CRC:
+```
+[BLOCK_LEN][BLOCK_DATA][CRC]
+```
+
+The sparse index is also intended to have integrity protection.
+
+The footer will have integrity protection as well.
+
+The purpose is to keep corruption detection local where possible:
+```
+corrupted block
+      ↓
+detect while reading that block
+```
+
+rather than requiring the entire SSTable to be treated as one large integrity
+domain.
+
+The exact checksum coverage for the sparse index and footer remains to be
+finalized.
+
+### 16. Current SSTable Architecture
+The current design can be summarized as:
+```
+                                  MemTable
+                                     │
+                                  Iterator
+                                     │
+                                     ▼
+                            ┌─────────────────┐
+                            │  Block Buffer   │
+                            │   ≤ 16 records  │
+                            └────────┬────────┘
+                                     │
+                            record first key +
+                            current file offset
+                                     │
+                                     ▼
+                            ┌─────────────────┐
+                            │   Data Block    │
+                            │ [LEN][DATA][CRC]│
+                            └────────┬────────┘
+                                     │
+                                     ▼
+                                  next block
+                                     │
+                                    ...
+                                     │
+                                     ▼
+                            ┌─────────────────┐
+                            │  Sparse Index   │
+                            └────────┬────────┘
+                                     │
+                                     ▼
+                            ┌─────────────────┐
+                            │     Footer      │
+                            └─────────────────┘
+```
+
+Lookup:
+```
+GET(key)
+   │
+   ▼
+Sparse Index
+   │
+   │ binary search
+   ▼
+Candidate Block
+   │
+   │ seek to block offset
+   ▼
+[BLOCK_LEN][BLOCK_DATA][CRC]
+   │
+   │ verify CRC
+   ▼
+scan ≤ 16 records
+   │
+   ▼
+result
+```
+
+### 17. Decisions Still Open
+The following have intentionally not been locked yet:
+- exact integer widths for key/value lengths
+- endian encoding for SSTable fields
+- exact sparse-index entry representation
+- exact sparse-index on-disk format
+- sparse-index checksum coverage
+- exact footer fields
+- footer checksum coverage
+- SSTable file naming/discovery
+- recovery behavior for incomplete SSTables
+- tombstone representation
+- multiple-SSTable lookup ordering
+- Bloom filters
+- compaction
+- SSTable versioning details
+- 
+These should be designed incrementally rather than introducing them all at
+once.
+
+### 18. Initial Design Principles
+The current SSTable design follows these principles:
+1. Sequential writes over random writes
+2. Buffer small blocks rather than backpatch metadata
+3. Exploit the MemTable's existing sorted order
+4. Keep sparse indexing lightweight
+5. Use length-prefixed framing for arbitrary key/value data
+6. Use local checksums for corruption detection
+7. Use a footer as the SSTable finalization boundary
+8. Spend a small amount of memory to simplify the write path
+9. Keep initial parameters tunable
+10. Measure and refine parameters empirically in v2.1.x
