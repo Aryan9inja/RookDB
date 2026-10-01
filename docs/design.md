@@ -1342,3 +1342,262 @@ The current SSTable design follows these principles:
 8. Spend a small amount of memory to simplify the write path
 9. Keep initial parameters tunable
 10. Measure and refine parameters empirically in v2.1.x
+
+## SSTable File Layout and Finalization
+
+The SSTable layout is extended with an explicit sparse-index integrity
+boundary and a fixed-size footer.
+
+The final layout is:
+
+```text
+┌──────────────────────────────┐
+│ Data Blocks                  │
+│                              │
+│ [BLOCK_LEN][BLOCK_DATA][CRC] │
+│ [BLOCK_LEN][BLOCK_DATA][CRC] │
+│ ...                          │
+├──────────────────────────────┤
+│ Sparse Index                 │
+│                              │
+│ [KEY_LEN][KEY][BLOCK_OFFSET] │
+│ [KEY_LEN][KEY][BLOCK_OFFSET] │
+│ ...                          │
+├──────────────────────────────┤
+│ Sparse Index CRC32           │
+├──────────────────────────────┤
+│ Footer                       │
+│   MAGIC                      │
+│   INDEX_OFFSET               │
+│   INDEX_SIZE                 │
+├──────────────────────────────┤
+│ Footer CRC32                 │
+└──────────────────────────────┘
+```
+
+The footer is fixed-width, so a separate footer-size field is unnecessary.
+
+The reader can locate the footer by seeking backwards from EOF by the known
+footer size plus its fixed-size CRC.
+
+### Sparse Index Integrity
+The sparse index has its own CRC32.
+
+The checksum covers all sparse-index entry bytes:
+```
+SparseIndexCRC = CRC32(all sparse-index entries)
+```
+
+The checksum is stored immediately after the sparse index and before the
+footer.
+
+INDEX_SIZE in the footer refers only to the sparse-index entries. It does
+not include the sparse-index CRC.
+
+Therefore:
+```
+INDEX_OFFSET
+      ↓
+[ sparse index entries ... ]
+      ↑
+      └── INDEX_SIZE bytes
+
+[ sparse index CRC ]
+[ footer ]
+[ footer CRC ]
+```
+
+This keeps the index data and its integrity metadata as separate, clearly
+defined regions.
+
+### Footer
+The footer contains the metadata required to locate the sparse index:
+```
+Footer
+├── MAGIC
+├── INDEX_OFFSET
+└── INDEX_SIZE
+```
+
+The footer itself is protected by a separate CRC32 stored immediately after
+the footer.
+
+The footer checksum covers the footer fields:
+```
+FooterCRC = CRC32(MAGIC + INDEX_OFFSET + INDEX_SIZE)
+```
+
+The footer does not contain its own size because its layout and field widths
+are fixed by the SSTable format.
+
+### SSTable Finalization
+An SSTable is considered finalized only after the complete sequence of storage
+structures has been successfully written:
+```
+Data Blocks
+    ↓
+Sparse Index
+    ↓
+Sparse Index CRC
+    ↓
+Footer
+    ↓
+Footer CRC
+```
+
+The footer is therefore the finalization boundary for the SSTable.
+
+The presence of earlier data in the file does not by itself make the SSTable
+valid.
+
+A process crash during any earlier stage can leave a partially written
+SSTable:
+```
+Blocks
+   ↓
+partial block / index / footer
+   ↓
+CRASH
+```
+
+Such a file is not considered a finalized SSTable because it does not have a
+complete valid footer.
+
+### Block Finalization
+Each data block is constructed completely in memory before being written.
+
+The block finalization sequence is:
+```
+accumulate records
+      ↓
+construct BLOCK_DATA
+      ↓
+calculate CRC32(BLOCK_DATA)
+      ↓
+write [BLOCK_LEN][BLOCK_DATA][CRC32]
+      ↓
+block finalized
+```
+
+The writer does not move to the next block until the current block has been
+constructed and its checksum calculated.
+
+This keeps each block as an independent integrity domain.
+
+### Crash During SSTable Construction
+If the process crashes while an SSTable is being constructed, the incomplete
+SSTable is not used as persistent state.
+
+Examples:
+#### Crash during a data block
+```
+Block 1 ✓
+Block 2 ✓
+Block 3 → CRASH
+```
+
+The SSTable has no finalized footer and is therefore not accepted as a
+completed SSTable.
+
+#### Crash during sparse-index writing
+```
+All data blocks ✓
+Sparse index → CRASH
+```
+
+Again, no finalized footer exists, so the SSTable is not accepted.
+
+#### Crash during footer writing
+```
+All data blocks ✓
+Sparse index ✓
+Footer → CRASH
+```
+
+The SSTable is still incomplete because its finalization marker was not
+successfully completed.
+
+### WAL as Recovery Source
+The WAL remains the durable source of mutation history.
+
+A partially constructed SSTable does not need to be repaired or completed
+after a crash.
+
+Recovery instead uses:
+```
+valid finalized SSTables
+        +
+WAL replay
+        ↓
+reconstructed MemTable
+```
+
+The incomplete SSTable can subsequently be discarded during SSTable
+discovery/cleanup.
+
+This preserves the fundamental storage invariant:
+```
+WAL → durable mutation history
+SSTable → finalized materialized state
+```
+
+### Background SSTable Flush
+SSTable flushing is intended to occur asynchronously after a MemTable reaches
+its flush threshold.
+
+The active MemTable is frozen and handed to the SSTable writer:
+```
+                    WAL
+                     │
+                     ▼
+               Active MemTable
+                     │
+              reaches threshold
+                     │
+                     ▼
+               freeze MemTable
+                     │
+                     ├──────────────► background flush
+                     │
+                     ▼
+               New MemTable
+                     │
+                     ▼
+                new writes
+```
+
+The frozen MemTable remains immutable while its contents are written to the
+SSTable.
+
+The new MemTable can accept subsequent writes while the previous MemTable is
+being flushed.
+
+The WAL continues recording these new mutations.
+
+If a crash occurs during the background flush, recovery can reconstruct the
+necessary state from the WAL rather than depending on the incomplete SSTable.
+
+### SSTable Validity Invariant
+The resulting invariant is:
+
+**An SSTable becomes part of persistent storage only after all of its data
+blocks and metadata have been successfully written and a valid final footer
+has been written.**
+
+More concretely:
+```
+No complete valid footer
+        ↓
+SSTable is incomplete
+        ↓
+do not use as finalized persistent state
+
+Complete valid footer
+        ↓
+SSTable is finalized
+        ↓
+may participate in recovery
+```
+
+The footer therefore serves as the durable boundary between an SSTable that is
+still being constructed and one that RookDB may treat as persistent state.
