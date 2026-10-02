@@ -28,8 +28,9 @@ func TestIterator(t *testing.T) {
 
 		key := it.Key()
 		value := it.Value()
-		if key != "name" || value != "aryan" {
-			t.Fatalf("expected key-value to be name-aryan, got %v-%v", key, value)
+		eType := it.Type()
+		if key != "name" || value != "aryan" || eType != setEntry {
+			t.Fatalf("expected key-value-type to be name-aryan-setEntry, got %v-%v-%v", key, value, eType)
 		}
 
 		if it.Next() {
@@ -40,13 +41,16 @@ func TestIterator(t *testing.T) {
 	t.Run("multiple elements in sorted order", func(t *testing.T) {
 		memT := MemTable{list: newSkipList()}
 		memT.list.putNode(setEntry, "pet", "3")
-		memT.list.putNode(setEntry, "bat", "1")
+		memT.list.putNode(deleteEntry, "bat", "")
 		memT.list.putNode(setEntry, "cat", "2")
 
-		expected := []struct{ key, value string }{
-			{"bat", "1"},
-			{"cat", "2"},
-			{"pet", "3"},
+		expected := []struct {
+			key, value string
+			eType      entryType
+		}{
+			{"bat", "", deleteEntry},
+			{"cat", "2", setEntry},
+			{"pet", "3", setEntry},
 		}
 		it := memT.Iterator()
 		for _, item := range expected {
@@ -58,6 +62,9 @@ func TestIterator(t *testing.T) {
 			}
 			if got := it.Value(); got != item.value {
 				t.Fatalf("expected value %q, got %q", item.value, got)
+			}
+			if got := it.Type(); got != item.eType {
+				t.Fatalf("expected type %v, got %v", item.eType, got)
 			}
 		}
 	})

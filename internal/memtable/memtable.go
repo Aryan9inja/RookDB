@@ -124,6 +124,10 @@ func (it *iterator) Value() string {
 	return it.current.listEntry.value
 }
 
+func (it *iterator) Type() entryType{
+	return it.current.listEntry.eType
+}
+
 // method to find nodes which are predecessor to targetKey at each level
 func (list *skipList) searchList(targetKey string) []*skipListNode {
 	update := make([]*skipListNode, maxSkipListHeight)
