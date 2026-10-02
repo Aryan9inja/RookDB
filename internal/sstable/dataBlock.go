@@ -5,7 +5,7 @@ import (
 	"hash/crc32"
 )
 
-func CreateBlock(records []*record) (block []byte, offsetDelta uint32) {
+func createBlock(records []*record) (block []byte, offsetDelta uint64) {
 	// Calculate total size of encoded records to preallocate memory
 	var dataLen int
 	for _, rec := range records {
@@ -25,6 +25,6 @@ func CreateBlock(records []*record) (block []byte, offsetDelta uint32) {
 	checksum := crc32.ChecksumIEEE(block)
 	block = binary.BigEndian.AppendUint32(block, checksum)
 
-	offsetDelta = uint32(blockSize)
+	offsetDelta = uint64(blockSize)
 	return
 }

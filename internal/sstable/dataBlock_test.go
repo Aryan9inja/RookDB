@@ -56,7 +56,7 @@ func TestCreateBlock(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			block, offsetDelta := CreateBlock(tt.records)
+			block, offsetDelta := createBlock(tt.records)
 
 			expectedDataSize := 0
 			for _, rec := range tt.records {
@@ -69,7 +69,7 @@ func TestCreateBlock(t *testing.T) {
 			}
 
 			t.Run("returned offsetDelta == len(block)", func(t *testing.T) {
-				if offsetDelta != uint32(len(block)) {
+				if offsetDelta != uint64(len(block)) {
 					t.Errorf("expected offsetDelta %d to equal len(block) %d", offsetDelta, len(block))
 				}
 			})
