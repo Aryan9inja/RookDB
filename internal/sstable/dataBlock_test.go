@@ -45,11 +45,11 @@ func TestCreateBlock(t *testing.T) {
 			},
 		},
 		{
-			name: "fewer than 16 records",
+			name:    "fewer than 16 records",
 			records: generateRecords(10),
 		},
 		{
-			name: "exactly 16 records",
+			name:    "exactly 16 records",
 			records: generateRecords(16),
 		},
 	}
