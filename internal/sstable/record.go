@@ -67,3 +67,7 @@ func DecodeRecord(data []byte) (*record, error) {
 		value: value,
 	}, nil
 }
+
+func (r *record) encodedSize() int {
+    return 5 + len(r.key) + len(r.value)
+}
