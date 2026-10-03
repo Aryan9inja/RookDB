@@ -1,7 +1,10 @@
 package sstable
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"testing"
 )
 
@@ -116,5 +119,101 @@ func TestBloomFilter_DuplicateInsertion(t *testing.T) {
 	}
 	if !contains {
 		t.Errorf("expected true for foo")
+	}
+}
+
+func TestEncodeBloomFilter_ExactStructure(t *testing.T) {
+	bf := &bloomFilter{
+		bits:      []byte{0x01, 0xA5, 0x80},
+		numBits:   24,
+		numHashes: 4,
+	}
+
+	encoded, bloomSize := encodeBloomFilter(bf)
+
+	expectedLength := 1 + 3 + 4 // 8
+	if len(encoded) != expectedLength {
+		t.Fatalf("expected encoded length %d, got %d", expectedLength, len(encoded))
+	}
+
+	if encoded[0] != 4 {
+		t.Errorf("expected byte 0 to be 4, got %d", encoded[0])
+	}
+
+	if !bytes.Equal(encoded[1:4], []byte{0x01, 0xA5, 0x80}) {
+		t.Errorf("expected bytes 1:4 to exactly match bits, got %v", encoded[1:4])
+	}
+
+	expectedCRC := crc32.ChecksumIEEE(encoded[:4])
+	actualCRC := binary.BigEndian.Uint32(encoded[4:])
+	if actualCRC != expectedCRC {
+		t.Errorf("expected CRC32 %d, got %d", expectedCRC, actualCRC)
+	}
+
+	if bloomSize != 4 {
+		t.Errorf("expected bloomSize 4, got %d", bloomSize)
+	}
+}
+
+func TestEncodeBloomFilter_EmptyFilter(t *testing.T) {
+	bf := newBloomFilter(0)
+	encoded, bloomSize := encodeBloomFilter(bf)
+
+	expectedLength := 1 + 0 + 4
+	if len(encoded) != expectedLength {
+		t.Fatalf("expected encoded length %d, got %d", expectedLength, len(encoded))
+	}
+
+	if encoded[0] != bf.numHashes {
+		t.Errorf("expected byte 0 to be %d, got %d", bf.numHashes, encoded[0])
+	}
+
+	expectedCRC := crc32.ChecksumIEEE(encoded[:1])
+	actualCRC := binary.BigEndian.Uint32(encoded[1:])
+	if actualCRC != expectedCRC {
+		t.Errorf("expected CRC32 %d, got %d", expectedCRC, actualCRC)
+	}
+
+	if bloomSize != 1 {
+		t.Errorf("expected bloomSize 1, got %d", bloomSize)
+	}
+}
+
+func TestEncodeBloomFilter_DifferentNumHashes(t *testing.T) {
+	bf := &bloomFilter{
+		bits:      []byte{0xFF},
+		numBits:   8,
+		numHashes: 7,
+	}
+
+	encoded, _ := encodeBloomFilter(bf)
+
+	if len(encoded) < 1 {
+		t.Fatalf("encoded output too short")
+	}
+
+	if encoded[0] != 7 {
+		t.Errorf("expected first byte to be 7, got %d", encoded[0])
+	}
+}
+
+func TestEncodeBloomFilter_CRCCorruption(t *testing.T) {
+	bf := &bloomFilter{
+		bits:      []byte{0x01, 0xA5, 0x80},
+		numBits:   24,
+		numHashes: 4,
+	}
+
+	encoded, _ := encodeBloomFilter(bf)
+
+	// mutate one payload byte
+	encoded[1] ^= 0xFF
+
+	// Recalculate/verify the CRC and ensure it doesn't match the stored checksum
+	recalculatedCRC := crc32.ChecksumIEEE(encoded[:len(encoded)-4])
+	storedCRC := binary.BigEndian.Uint32(encoded[len(encoded)-4:])
+
+	if recalculatedCRC == storedCRC {
+		t.Errorf("expected CRC to not match after corruption, but it did")
 	}
 }
