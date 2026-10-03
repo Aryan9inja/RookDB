@@ -1,7 +1,9 @@
 package sstable
 
 import (
+	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"math"
 
 	"github.com/cespare/xxhash/v2"
@@ -31,7 +33,7 @@ func newBloomFilter(numKeys uint64) *bloomFilter {
 
 	return &bloomFilter{
 		bits:      make([]byte, numBytes),
-		numBits:   numBits,
+		numBits:   numBytes * 8,
 		numHashes: 4,
 	}
 }
@@ -109,4 +111,25 @@ func (bf *bloomFilter) maycontain(key string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// encodes the bloom filter to
+// [numHashes:uint8][bloomBits][crc32-checksum]
+// to write on disk
+// returns byte representation
+// also returns bloomSize for footer entry
+// bloom size = above data bytes - 4 for crc32
+func encodeBloomFilter(bf *bloomFilter) ([]byte, uint64) {
+	buff := make([]byte, 1+len(bf.bits)+4)
+
+	buff[0] = bf.numHashes
+	copy(buff[1:], bf.bits)
+
+	const checksumSize = 4
+
+	checksumOffset := len(buff) - checksumSize
+	checksum := crc32.ChecksumIEEE(buff[:checksumOffset])
+	binary.BigEndian.PutUint32(buff[checksumOffset:], checksum)
+
+	return buff, uint64(checksumOffset)
 }
