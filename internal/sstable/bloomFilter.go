@@ -8,8 +8,8 @@ import (
 )
 
 const (
-    seed1 uint64 = 11485691035412315671
-    seed2 uint64 = 12115691354135812323
+	seed1 uint64 = 11485691035412315671
+	seed2 uint64 = 12115691354135812323
 )
 
 type bloomFilter struct {
@@ -37,7 +37,11 @@ func newBloomFilter(numKeys uint64) *bloomFilter {
 }
 
 // Double hashing to derive multiple positions from two hashes.
-func (bf *bloomFilter) Add(key string) error {
+func (bf *bloomFilter) add(key string) error {
+	if bf.numBits == 0 {
+		return nil
+	}
+
 	h1 := xxhash.NewWithSeed(seed1)
 	h2 := xxhash.NewWithSeed(seed2)
 
@@ -67,4 +71,42 @@ func (bf *bloomFilter) Add(key string) error {
 	}
 
 	return nil
+}
+
+func (bf *bloomFilter) maycontain(key string) (bool, error) {
+	if bf.numBits == 0 {
+		return false, nil
+	}
+
+	h1 := xxhash.NewWithSeed(seed1)
+	h2 := xxhash.NewWithSeed(seed2)
+
+	n, err := h1.WriteString(key)
+	if err != nil {
+		return false, fmt.Errorf("bloom filter: check: hash 1 failed: %w", err)
+	}
+	if n < len(key) {
+		return false, fmt.Errorf("bloom filter: check: hash 1 failed: short write")
+	}
+	hash1 := h1.Sum64()
+
+	n, err = h2.WriteString(key)
+	if err != nil {
+		return false, fmt.Errorf("bloom filter: check: hash 2 failed: %w", err)
+	}
+	if n < len(key) {
+		return false, fmt.Errorf("bloom filter: check: hash 2 failed: short write")
+	}
+	hash2 := h2.Sum64()
+
+	for i := range bf.numHashes {
+		pos := (hash1 + (uint64(i) * hash2)) % bf.numBits
+		byteIndex := pos / 8
+		bitIndex := pos % 8
+		if bf.bits[byteIndex]&(1<<bitIndex) == 0 {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
