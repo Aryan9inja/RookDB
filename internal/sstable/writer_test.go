@@ -6,8 +6,91 @@ import (
 	"hash/crc32"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+
+	"github.com/Aryan9inja/RookDB/internal/memtable"
 )
+
+func TestWriteSSTable(t *testing.T) {
+	// create a memtable
+	mTable := memtable.NewMemTable()
+
+	// fill memtable with some entries
+	for i := range 35 {
+		if i%5 == 0 {
+			mTable.Delete(strconv.Itoa(i))
+		} else {
+			mTable.Put(strconv.Itoa(i), strconv.Itoa(i))
+		}
+	}
+
+	// Create SSTable path
+	tempDir := t.TempDir()
+	tempFile := filepath.Join(tempDir, "test_index_writer.sst")
+
+	idxOffset, idxSize, err := WriteSSTable(mTable, tempFile)
+	if err != nil {
+		t.Fatalf("WriteSSTable failed: %v", err)
+	}
+
+	if idxOffset == 0 {
+		t.Errorf("expected idxOffset > 0, got %d", idxOffset)
+	}
+	if idxSize == 0 {
+		t.Errorf("expected idxSize > 0, got %d", idxSize)
+	}
+
+	// Read the generated file
+	data, err := os.ReadFile(tempFile)
+	if err != nil {
+		t.Fatalf("failed to read SSTable file: %v", err)
+	}
+
+	// Confirm the index starts exactly at indexOffset
+	expectedFileSize := idxOffset + idxSize + 4 // 4 bytes for CRC
+	if uint64(len(data)) != expectedFileSize {
+		t.Errorf("expected file size %d, got %d", expectedFileSize, len(data))
+	}
+
+	// Confirm the index CRC is present/correct
+	indexData := data[idxOffset : idxOffset+idxSize]
+	expectedCRC := crc32.ChecksumIEEE(indexData)
+	actualCRC := binary.BigEndian.Uint32(data[idxOffset+idxSize:])
+	if expectedCRC != actualCRC {
+		t.Errorf("expected CRC %d, got %d", expectedCRC, actualCRC)
+	}
+
+	// Confirm there are multiple blocks and sparse index points to the correct block offsets
+	var parsedIndexes []indexEntry
+	offset := uint64(0)
+	for offset < idxSize {
+		keyLen := binary.BigEndian.Uint16(indexData[offset : offset+2])
+		key := string(indexData[offset+2 : offset+2+uint64(keyLen)])
+		blockOffset := binary.BigEndian.Uint64(indexData[offset+2+uint64(keyLen) : offset+2+uint64(keyLen)+8])
+		parsedIndexes = append(parsedIndexes, indexEntry{key: key, offset: blockOffset})
+		offset += 2 + uint64(keyLen) + 8
+	}
+
+	if len(parsedIndexes) < 2 {
+		t.Errorf("expected multiple blocks, got %d", len(parsedIndexes))
+	}
+
+	// First block offset should be 0
+	if parsedIndexes[0].offset != 0 {
+		t.Errorf("expected first block offset to be 0, got %d", parsedIndexes[0].offset)
+	}
+
+	// Subsequent blocks should have increasing offsets within the data section
+	for i := 1; i < len(parsedIndexes); i++ {
+		if parsedIndexes[i].offset <= parsedIndexes[i-1].offset {
+			t.Errorf("expected block offset to be strictly increasing: %d <= %d", parsedIndexes[i].offset, parsedIndexes[i-1].offset)
+		}
+		if parsedIndexes[i].offset >= idxOffset {
+			t.Errorf("block offset %d is beyond data section (size %d)", parsedIndexes[i].offset, idxOffset)
+		}
+	}
+}
 
 func TestIndexWriter(t *testing.T) {
 	tempDir := t.TempDir()
