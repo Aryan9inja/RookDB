@@ -542,3 +542,42 @@ func newTestNode(t *testing.T, eType entryType, key, value string, height int) *
 		next:      make([]*skipListNode, height),
 	}
 }
+
+func TestMemTable_EntryCount(t *testing.T) {
+	t.Run("empty memtable", func(t *testing.T) {
+		memT := NewMemTable()
+		if got := memT.EntryCount(); got != 0 {
+			t.Fatalf("expected 0, got %d", got)
+		}
+	})
+
+	t.Run("multiple distinct puts", func(t *testing.T) {
+		memT := NewMemTable()
+		memT.Put("key1", "value1")
+		memT.Put("key2", "value2")
+
+		if got := memT.EntryCount(); got != 2 {
+			t.Fatalf("expected 2, got %d", got)
+		}
+	})
+
+	t.Run("putting and deleting same key", func(t *testing.T) {
+		memT := NewMemTable()
+		memT.Put("key1", "value1")
+		memT.Put("key1", "value2") // update existing
+		memT.Delete("key1")        // delete existing
+
+		if got := memT.EntryCount(); got != 1 {
+			t.Fatalf("expected 1, got %d", got)
+		}
+	})
+
+	t.Run("deleting non-existent key", func(t *testing.T) {
+		memT := NewMemTable()
+		memT.Delete("key1")
+
+		if got := memT.EntryCount(); got != 1 {
+			t.Fatalf("expected 1, got %d", got)
+		}
+	})
+}
