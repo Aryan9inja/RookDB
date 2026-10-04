@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
+	"slices"
 	"testing"
 )
 
@@ -28,13 +29,13 @@ func TestBloomFilter_Constructor(t *testing.T) {
 		if bf.numBits != 0 {
 			t.Errorf("expected numBits == 0, got %d", bf.numBits)
 		}
-		
+
 		// Should not panic
 		err := bf.add("test")
 		if err != nil {
 			t.Errorf("unexpected error on add: %v", err)
 		}
-		
+
 		contains, err := bf.maycontain("test")
 		if err != nil {
 			t.Errorf("unexpected error on maycontain: %v", err)
@@ -67,14 +68,14 @@ func TestBloomFilter_BasicMembership(t *testing.T) {
 func TestBloomFilter_NoFalseNegatives(t *testing.T) {
 	numKeys := 1000
 	bf := newBloomFilter(uint64(numKeys))
-	
+
 	for i := range numKeys {
 		key := fmt.Sprintf("key_%d", i)
 		if err := bf.add(key); err != nil {
 			t.Errorf("unexpected error adding %s: %v", key, err)
 		}
 	}
-	
+
 	for i := range numKeys {
 		key := fmt.Sprintf("key_%d", i)
 		contains, err := bf.maycontain(key)
@@ -96,7 +97,7 @@ func TestBloomFilter_EmptyFilter(t *testing.T) {
 	if contains {
 		t.Errorf("expected false for empty filter")
 	}
-	
+
 	// verify all bits are zero
 	for i, b := range bf.bits {
 		if b != 0 {
@@ -215,5 +216,62 @@ func TestEncodeBloomFilter_CRCCorruption(t *testing.T) {
 
 	if recalculatedCRC == storedCRC {
 		t.Errorf("expected CRC to not match after corruption, but it did")
+	}
+}
+
+func TestDecodeBloomFilter_EncodeDecodeRoundtrip(t *testing.T) {
+	expected := &bloomFilter{
+		bits:      []byte{0x01, 0xA5, 0x80},
+		numBits:   24,
+		numHashes: 4,
+	}
+
+	encoded, size := encodeBloomFilter(expected)
+
+	got, err := decodeBloomFilter(encoded, size)
+	if err != nil {
+		t.Fatalf("error in decoding encoded data: %v", err)
+	}
+
+	if !slices.Equal(got.bits, expected.bits) || got.numHashes != expected.numHashes || got.numBits != expected.numBits {
+		t.Errorf("decode error: got %v, expected %v", got, expected)
+	}
+}
+
+func TestDecodeBloomFilter_WrongSize(t *testing.T) {
+	expected := &bloomFilter{
+		bits:      []byte{0x01, 0xA5, 0x80},
+		numBits:   24,
+		numHashes: 4,
+	}
+
+	encoded, size := encodeBloomFilter(expected)
+
+	_, err := decodeBloomFilter(encoded, size-1)
+	if err == nil {
+		t.Errorf("expected error for wrong size while decoding")
+	}
+}
+
+func TestDecodeBloomFilter_CorruptedPayload(t *testing.T) {
+	expected := &bloomFilter{
+		bits:      []byte{0x01, 0xA5, 0x80},
+		numBits:   24,
+		numHashes: 4,
+	}
+
+	encoded, size := encodeBloomFilter(expected)
+	encoded[1] = 0xFF
+
+	_, err := decodeBloomFilter(encoded, size)
+	if err == nil {
+		t.Errorf("expected error for corrupted payload while decoding")
+	}
+}
+
+func TestDecodeBloomFilter_TruncatedLength(t *testing.T) {
+	_, err := decodeBloomFilter([]byte{0x10}, 3)
+	if err == nil {
+		t.Errorf("expected error for truncated length while decoding")
 	}
 }
