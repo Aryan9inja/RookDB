@@ -79,12 +79,12 @@ RookDB will evolve incrementally from a simple persistent key-value store into a
 
 ### Phase 2 — LSM Storage Engine
 
-- [ ] Memtable
-- [ ] SSTables
+- [x] Memtable
+- [x] SSTables
 - [ ] Immutable memtables
-- [ ] Flush pipeline
+- [x] Flush pipeline
 - [ ] Compaction
-- [ ] Bloom filters
+- [x] Bloom filters
 - [ ] Snapshots
 
 ### Phase 3 — Crash Recovery & Reliability
