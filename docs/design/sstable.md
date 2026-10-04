@@ -22,14 +22,14 @@ Bloom filter
   [HASH_COUNT:uint8][BITSET]
 Bloom filter CRC32
 Footer
-  [MAGIC:8 bytes][BLOOM_OFFSET:uint64][BLOOM_SIZE:uint64]
+  [BLOOM_OFFSET:uint64][BLOOM_SIZE:uint64]
   [INDEX_OFFSET:uint64][INDEX_SIZE:uint64]
 Footer CRC32
 ```
 
 All fixed-width integers use the same byte order. `BLOCK_LEN` counts only block data. A data-block CRC covers `BLOCK_DATA`. The sparse-index CRC covers all encoded index entries; `INDEX_SIZE` excludes its CRC. The Bloom filter CRC covers its complete encoding, including `HASH_COUNT`; `BLOOM_SIZE` excludes that CRC. The footer CRC covers all footer fields, including `MAGIC`.
 
-`MAGIC` is a fixed 8-byte format identifier. The footer fields before its CRC occupy 40 bytes, so the reader locates the footer at a fixed offset from EOF. The footer CRC immediately follows those fields.
+The footer fields before its CRC occupy 32 bytes, so the reader locates the footer at a fixed offset from EOF. The footer CRC immediately follows those fields. For finding the footer the reader can simply seek 36 bytes (Footer + CRC) back from EOF.
 
 The index and Bloom filter each have separate integrity checks from the data blocks and footer. `BLOOM_OFFSET` and `INDEX_OFFSET` are absolute offsets from the beginning of the file. Each size field covers only its corresponding encoded region and excludes its CRC.
 
