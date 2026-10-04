@@ -33,6 +33,9 @@ type iterator struct {
 
 type skipList struct {
 	head *skipListNode
+
+	// tells how many key/value nodes are present
+	entryCount uint64
 }
 
 type skipListNode struct {
@@ -89,12 +92,16 @@ func (mTable *MemTable) Put(key, value string) {
 }
 
 func (mTable *MemTable) Get(key string) (string, entryType, bool) {
-    return mTable.list.getNode(key)
+	return mTable.list.getNode(key)
 }
 
 func (mTable *MemTable) Delete(key string) {
 	sizeDelta := mTable.list.putNode(deleteEntry, key, "")
 	mTable.approxSize += sizeDelta
+}
+
+func (mTable *MemTable) EntryCount() uint64 {
+	return mTable.list.entryCount
 }
 
 func (m *MemTable) Iterator() *iterator {
@@ -124,7 +131,7 @@ func (it *iterator) Value() string {
 	return it.current.listEntry.value
 }
 
-func (it *iterator) Type() entryType{
+func (it *iterator) Type() entryType {
 	return it.current.listEntry.eType
 }
 
@@ -205,6 +212,7 @@ func (list *skipList) putNodeWithHeight(t entryType, k, v string, height int) (s
 		next:      make([]*skipListNode, height),
 	}
 	sizeDelta = int64(skipListNodeOverhead + len(k) + len(v) + 8*height)
+	list.entryCount++
 
 	for level := range height {
 		node.next[level] = update[level].next[level]
