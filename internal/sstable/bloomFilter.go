@@ -133,3 +133,27 @@ func encodeBloomFilter(bf *bloomFilter) ([]byte, uint64) {
 
 	return buff, uint64(checksumOffset)
 }
+
+func decodeBloomFilter(encoded []byte, size uint64) (*bloomFilter, error) {
+	if len(encoded) < 5 {
+		return nil, fmt.Errorf("decode: bloom filter data too short")
+	}
+	if uint64(len(encoded))-4 != size {
+		return nil, fmt.Errorf("decode: bloom filter size corruption")
+	}
+
+	expectedCRC := crc32.ChecksumIEEE(encoded[:size])
+	actualCRC := binary.BigEndian.Uint32(encoded[size:])
+	if actualCRC != expectedCRC {
+		return nil, fmt.Errorf("decode: bloom filter data corrupted: failed CRC check")
+	}
+
+	hashes := uint8(encoded[0])
+	bloomBits := encoded[1:size]
+
+	return &bloomFilter{
+		numHashes: hashes,
+		bits:      bloomBits,
+		numBits:   uint64(len(bloomBits)) * 8,
+	}, nil
+}
