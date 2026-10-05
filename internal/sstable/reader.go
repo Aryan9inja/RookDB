@@ -53,3 +53,19 @@ func (reader *SSTableReader) footerReader() error {
 
 	return nil
 }
+
+func (reader *SSTableReader) bloomFilterReader() (*bloomFilter, error) {
+	buffer := make([]byte, reader.foot.bloomSize+4)
+
+	_, err := reader.fd.ReadAt(buffer, int64(reader.foot.bloomOffset))
+	if err != nil {
+		return nil, fmt.Errorf("bloomFilter reader: readAt: %w", err)
+	}
+
+	bloomFilter, err := decodeBloomFilter(buffer, reader.foot.bloomSize)
+	if err != nil {
+		return nil, fmt.Errorf("footer reader: decode bloomFilter: %w", err)
+	}
+
+	return bloomFilter, err
+}
