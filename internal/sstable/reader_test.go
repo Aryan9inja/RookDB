@@ -50,4 +50,41 @@ func TestSSTableReader(t *testing.T) {
 			t.Error("expected non-zero bloom offset in footer")
 		}
 	})
+
+	t.Run("test bloomFilter reader", func(t *testing.T) {
+		bf, err := reader.bloomFilterReader()
+		if err != nil {
+			t.Fatalf("bloom filter reader failed: %v", err)
+		}
+
+		// Verify all inserted keys (including tombstones) are in the bloom filter
+		for i := range 5000 {
+			key := strconv.Itoa(i)
+			contains, err := bf.maycontain(key)
+			if err != nil {
+				t.Fatalf("maycontain check failed for key %s: %v", key, err)
+			}
+			if !contains {
+				t.Errorf("expected bloom filter to contain key %s, but it did not", key)
+			}
+		}
+
+		// Verify keys that were never inserted are mostly reported as absent
+		falsePositives := 0
+		for i := 5000; i < 6000; i++ {
+			key := strconv.Itoa(i)
+			contains, err := bf.maycontain(key)
+			if err != nil {
+				t.Fatalf("maycontain check failed for absent key %s: %v", key, err)
+			}
+			if contains {
+				falsePositives++
+			}
+		}
+
+		// A false positive rate of 100% on 1000 items would strongly indicate a bug
+		if falsePositives == 1000 {
+			t.Error("bloom filter returned true for all absent keys (100% false positive rate)")
+		}
+	})
 }
