@@ -1,19 +1,12 @@
 package sstable
 
 import (
-	"encoding/binary"
 	"fmt"
-	"hash/crc32"
 	"os"
 	"path/filepath"
 
 	"github.com/Aryan9inja/RookDB/internal/memtable"
 )
-
-type indexEntry struct {
-	key    string
-	offset uint64
-}
 
 func WriteSSTable(mTable *memtable.MemTable, path string) error {
 	absPath, err := filepath.Abs(path)
@@ -80,14 +73,18 @@ func WriteSSTable(mTable *memtable.MemTable, path string) error {
 		}
 	}
 
-	indexSize, err := indexWriter(indexes, fd)
+	indexBuffer, indexSize := encodeSparseIndex(indexes)
+	n, err := fd.Write(indexBuffer)
 	if err != nil {
-		return fmt.Errorf("index writing: %w", err)
+		return fmt.Errorf("write SSTable indexes: %w", err)
+	}
+	if n < len(indexBuffer) {
+		return fmt.Errorf("short write: wrote %d of %d bytes", n, len(indexBuffer))
 	}
 
 	bloomOffset := indexOffset + indexSize + 4
 	bloomBuffer, bloomSize := encodeBloomFilter(bloom)
-	n, err := fd.Write(bloomBuffer)
+	n, err = fd.Write(bloomBuffer)
 	if err != nil {
 		return fmt.Errorf("write SSTable bloomFilter: %w", err)
 	}
@@ -110,36 +107,4 @@ func WriteSSTable(mTable *memtable.MemTable, path string) error {
 	}
 
 	return nil
-}
-
-func indexWriter(indexes []indexEntry, fd *os.File) (indexSize uint64, err error) {
-	var indexBuffer []byte
-
-	for _, index := range indexes {
-		recordLen := 2 + len(index.key) + 8
-		buf := make([]byte, recordLen)
-
-		binary.BigEndian.PutUint16(buf[0:2], uint16(len(index.key)))
-		copy(buf[2:], index.key)
-		binary.BigEndian.PutUint64(buf[2+len(index.key):], index.offset)
-
-		indexSize += uint64(recordLen)
-		indexBuffer = append(indexBuffer, buf...)
-	}
-
-	checksum := crc32.ChecksumIEEE(indexBuffer)
-	checksumBuf := make([]byte, 4)
-	binary.BigEndian.PutUint32(checksumBuf, checksum)
-
-	indexBuffer = append(indexBuffer, checksumBuf...)
-
-	n, err := fd.Write(indexBuffer)
-	if err != nil {
-		return 0, fmt.Errorf("write SSTable indexes: %w", err)
-	}
-	if n < len(indexBuffer) {
-		return 0, fmt.Errorf("short write: wrote %d of %d bytes", n, len(indexBuffer))
-	}
-
-	return
 }
