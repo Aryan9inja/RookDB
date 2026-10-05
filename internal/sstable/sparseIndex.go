@@ -2,6 +2,7 @@ package sstable
 
 import (
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
 )
 
@@ -36,4 +37,43 @@ func encodeSparseIndex(indexes []indexEntry) ([]byte, uint64) {
 	indexBuffer = append(indexBuffer, checksumBuf...)
 
 	return indexBuffer, indexSize
+}
+
+func decodeSparseIndex(encoded []byte, size uint64) ([]indexEntry, error) {
+	if uint64(len(encoded))-4 != size {
+		return nil, fmt.Errorf("decode: sparse index: size corruption")
+	}
+
+	expectedCRC := crc32.ChecksumIEEE(encoded[:size])
+	actualCRC := binary.BigEndian.Uint32(encoded[size:])
+	if actualCRC != expectedCRC {
+		return nil, fmt.Errorf("decode: sparse index data corrupted: failed CRC check")
+	}
+
+	var indexes []indexEntry
+	var ptr uint64
+
+	for ptr < size {
+		if ptr+2 > size {
+			return nil, fmt.Errorf("decode: sparse index data corrupted: unexpected EOF")
+		}
+		keyLen := uint64(binary.BigEndian.Uint16(encoded[ptr : ptr+2]))
+		ptr += 2
+
+		if ptr+keyLen+8 > size {
+			return nil, fmt.Errorf("decode: sparse index data corrupted: unexpected EOF")
+		}
+		key := string(encoded[ptr : ptr+keyLen])
+		ptr += keyLen
+
+		valOffset := binary.BigEndian.Uint64(encoded[ptr : ptr+8])
+		ptr += 8
+
+		indexes = append(indexes, indexEntry{
+			key:    key,
+			offset: valOffset,
+		})
+	}
+
+	return indexes, nil
 }
