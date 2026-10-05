@@ -64,8 +64,24 @@ func (reader *SSTableReader) bloomFilterReader() (*bloomFilter, error) {
 
 	bloomFilter, err := decodeBloomFilter(buffer, reader.foot.bloomSize)
 	if err != nil {
-		return nil, fmt.Errorf("footer reader: decode bloomFilter: %w", err)
+		return nil, fmt.Errorf("bloomFilter reader: decode bloomFilter: %w", err)
 	}
 
-	return bloomFilter, err
+	return bloomFilter, nil
+}
+
+func (reader *SSTableReader) indexEntryReader() ([]indexEntry, error) {
+	buffer := make([]byte, reader.foot.indexSize+4)
+
+	_, err := reader.fd.ReadAt(buffer, int64(reader.foot.indexOffset))
+	if err != nil {
+		return nil, fmt.Errorf("indexEntry reader: readAt: %w", err)
+	}
+
+	indexes, err := decodeSparseIndex(buffer, reader.foot.indexSize)
+	if err != nil {
+		return nil, fmt.Errorf("indexEntry reader: decode indexEntry: %w", err)
+	}
+
+	return indexes, nil
 }
