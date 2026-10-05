@@ -87,4 +87,40 @@ func TestSSTableReader(t *testing.T) {
 			t.Error("bloom filter returned true for all absent keys (100% false positive rate)")
 		}
 	})
+
+	t.Run("test indexEntry reader", func(t *testing.T) {
+		indexes, err := reader.indexEntryReader()
+		if err != nil {
+			t.Fatalf("indexEntry reader failed: %v", err)
+		}
+
+		if len(indexes) == 0 {
+			t.Fatalf("expected non-zero index entries")
+		}
+
+		// Since we wrote 5000 records and each block has up to 16 records,
+		// the number of blocks (and thus index entries) should be exactly ceil(5000/16) = 313.
+		expectedIndexes := 313
+		if len(indexes) != expectedIndexes {
+			t.Errorf("expected %d index entries, got %d", expectedIndexes, len(indexes))
+		}
+
+		if indexes[0].offset != 0 {
+			t.Errorf("expected first index offset to be 0, got %d", indexes[0].offset)
+		}
+
+		// Ensure offsets are strictly increasing
+		var prevOffset uint64 = 0
+		for i, index := range indexes {
+			if i > 0 {
+				if index.offset <= prevOffset {
+					t.Errorf("expected index offsets to be strictly increasing, but at %d found offset %d <= %d", i, index.offset, prevOffset)
+				}
+				if index.key <= indexes[i-1].key {
+					t.Errorf("expected index keys to be strictly increasing, but at %d found key %s <= %s", i, index.key, indexes[i-1].key)
+				}
+			}
+			prevOffset = index.offset
+		}
+	})
 }
