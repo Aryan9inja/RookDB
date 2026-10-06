@@ -1,7 +1,9 @@
 package sstable
 
 import (
+	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"os"
 )
 
@@ -9,6 +11,8 @@ type SSTableReader struct {
 	fd   *os.File
 	foot *footer
 }
+
+const maxExpectedBlockSize = 10240 // 10 KB
 
 func NewSSTableReader(path string) (*SSTableReader, error) {
 	fd, err := os.Open(path)
@@ -84,4 +88,60 @@ func (reader *SSTableReader) indexEntryReader() ([]indexEntry, error) {
 	}
 
 	return indexes, nil
+}
+
+func (reader *SSTableReader) blockReader(offset uint64) ([]*record, error) {
+	buffer := make([]byte, 4)
+
+	_, err := reader.fd.ReadAt(buffer, int64(offset))
+	if err != nil {
+		return nil, fmt.Errorf("block reader: readAt for len: %w", err)
+	}
+
+	length := binary.BigEndian.Uint32(buffer)
+	if length > maxExpectedBlockSize {
+		return nil, fmt.Errorf("block reader: unexpectedly large block size")
+	}
+
+	dataBufferAndCRC := make([]byte, length+4)
+	_, err = reader.fd.ReadAt(dataBufferAndCRC, int64(offset+4))
+	if err != nil {
+		return nil, fmt.Errorf("block reader: readAt for data and crc: %w", err)
+	}
+
+	buffer = append(buffer, dataBufferAndCRC...)
+
+	expectedCRC := crc32.ChecksumIEEE(buffer[:len(buffer)-4])
+	actualCRC := binary.BigEndian.Uint32(buffer[len(buffer)-4:])
+	if expectedCRC != actualCRC {
+		return nil, fmt.Errorf("block reader: crc mismatch: corruption detected")
+	}
+
+	var records []*record
+	var ptr uint32 = 4 // Start from first record
+
+	// till checksum bit encounter
+	for ptr < length+4 {
+		if ptr+5 > length+4 {
+			return nil, fmt.Errorf("block reader: unexpected end of block before record header")
+		}
+
+		keyLen := binary.BigEndian.Uint16(buffer[ptr+1 : ptr+3])
+		valueLen := binary.BigEndian.Uint16(buffer[ptr+3 : ptr+5])
+
+		recordEnd := ptr + 5 + uint32(keyLen) + uint32(valueLen)
+		if recordEnd > length+4 {
+			return nil, fmt.Errorf("block reader: unexpected end of block before record data")
+		}
+
+		rec, err := decodeRecord(buffer[ptr:recordEnd])
+		if err != nil {
+			return nil, fmt.Errorf("block reader: block decoding failed: %w", err)
+		}
+
+		records = append(records, rec)
+		ptr = recordEnd
+	}
+
+	return records, nil
 }
