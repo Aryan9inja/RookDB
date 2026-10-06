@@ -146,4 +146,98 @@ func TestSSTableReader(t *testing.T) {
 			t.Errorf("expected to read exactly 5000 records across all blocks, but got %d", totalRecords)
 		}
 	})
+
+	t.Run("test Get", func(t *testing.T) {
+		// Test existing keys
+		val, rType, found, err := reader.Get("1")
+		if err != nil {
+			t.Fatalf("Get failed with error: %v", err)
+		}
+		if !found || val != "1" || rType != setRecord {
+			t.Errorf("Get failed for existing key '1': found=%v, val=%s, rType=%v", found, val, rType)
+		}
+
+		// Test deleted keys (tombstones)
+		val, rType, found, err = reader.Get("5") // 5%5 == 0, deleted
+		if err != nil {
+			t.Fatalf("Get failed with error: %v", err)
+		}
+		if !found || rType != deleteRecord {
+			t.Errorf("Get failed for deleted key '5': found=%v, rType=%v", found, rType)
+		}
+
+		// Test non-existent keys
+		_, _, found, err = reader.Get("9999")
+		if err != nil {
+			t.Fatalf("Get failed with error: %v", err)
+		}
+		if found {
+			t.Errorf("Get failed for non-existent key '9999': expected not found")
+		}
+	})
+}
+
+func TestSearchIndexes(t *testing.T) {
+	indexes := []indexEntry{
+		{key: "apple", offset: 100},
+		{key: "banana", offset: 200},
+		{key: "cherry", offset: 300},
+		{key: "date", offset: 400},
+	}
+
+	tests := []struct {
+		name       string
+		target     string
+		wantOffset uint64
+		wantFound  bool
+	}{
+		{
+			name:       "empty indexes",
+			target:     "anything",
+			wantOffset: 0,
+			wantFound:  false,
+		},
+		{
+			name:       "target before first key",
+			target:     "aardvark",
+			wantOffset: 0,
+			wantFound:  false,
+		},
+		{
+			name:       "target exactly equal to first key",
+			target:     "apple",
+			wantOffset: 100,
+			wantFound:  true,
+		},
+		{
+			name:       "target exactly equal to middle key",
+			target:     "cherry",
+			wantOffset: 300,
+			wantFound:  true,
+		},
+		{
+			name:       "target between two index keys",
+			target:     "blackberry",
+			wantOffset: 200,
+			wantFound:  true,
+		},
+		{
+			name:       "target after last key",
+			target:     "fig",
+			wantOffset: 400,
+			wantFound:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotEntry, gotFound := searchIndexes(indexes, tt.target)
+			if gotFound != tt.wantFound {
+				t.Errorf("searchIndexes() gotFound = %v, want %v", gotFound, tt.wantFound)
+			}
+			if gotFound && gotEntry.offset != tt.wantOffset {
+				t.Errorf("searchIndexes() gotEntry.offset = %v, want %v", gotEntry.offset, tt.wantOffset)
+			}
+		})
+	}
 }
