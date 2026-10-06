@@ -33,6 +33,76 @@ func (reader *SSTableReader) Close() error {
 	return nil
 }
 
+func (reader *SSTableReader) Get(target string) (string, recordType, bool, error) {
+	if err := reader.footerReader(); err != nil {
+		return "", 0, false, fmt.Errorf("error reading file footer: %w", err)
+	}
+
+	bloom, err := reader.bloomFilterReader()
+	if err != nil {
+		return "", 0, false, fmt.Errorf("error reading bloom filter: %w", err)
+	}
+
+	contains, err := bloom.maycontain(target)
+	if err != nil {
+		return "", 0, false, fmt.Errorf("error running bloom check: %w", err)
+	}
+
+	if !contains {
+		return "", 0, false, nil
+	}
+
+	indexes, err := reader.indexEntryReader()
+	if err != nil {
+		return "", 0, false, fmt.Errorf("error reading sparse indexes: %w", err)
+	}
+
+	blockIdx, ok := searchIndexes(indexes, target)
+	if !ok {
+		return "", 0, false, nil
+	}
+
+	records, err := reader.blockReader(blockIdx.offset)
+	if err != nil {
+		return "", 0, false, fmt.Errorf("error reading block: %w", err)
+	}
+
+	for _, rec := range records {
+		if rec.key == target {
+			return rec.value, rec.rType, true, nil
+		}
+	}
+
+	return "", 0, false, nil
+}
+
+func searchIndexes(indexes []indexEntry, target string) (indexEntry, bool) {
+	if len(indexes) == 0 {
+		return indexEntry{}, false
+	}
+
+	low := 0
+	high := len(indexes) - 1
+	ans := -1
+
+	for low <= high {
+		mid := low + (high-low)/2
+
+		if indexes[mid].key <= target {
+			ans = mid
+			low = mid + 1
+		} else {
+			high = mid - 1
+		}
+	}
+
+	if ans == -1 {
+		return indexEntry{}, false
+	}
+
+	return indexes[ans], true
+}
+
 func (reader *SSTableReader) footerReader() error {
 	info, err := reader.fd.Stat()
 	if err != nil {
