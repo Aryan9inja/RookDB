@@ -123,4 +123,27 @@ func TestSSTableReader(t *testing.T) {
 			prevOffset = index.offset
 		}
 	})
+
+	t.Run("test block reader", func(t *testing.T) {
+		indexes, err := reader.indexEntryReader()
+		if err != nil {
+			t.Fatalf("failed to read indexes for block testing: %v", err)
+		}
+
+		var totalRecords int
+		for i, index := range indexes {
+			records, err := reader.blockReader(index.offset)
+			if err != nil {
+				t.Fatalf("blockReader failed at block %d (offset %d): %v", i, index.offset, err)
+			}
+			if len(records) == 0 {
+				t.Errorf("expected records in block %d, got 0", i)
+			}
+			totalRecords += len(records)
+		}
+
+		if totalRecords != 5000 {
+			t.Errorf("expected to read exactly 5000 records across all blocks, but got %d", totalRecords)
+		}
+	})
 }
