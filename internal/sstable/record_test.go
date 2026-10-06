@@ -14,7 +14,7 @@ func TestEncode(t *testing.T) {
 			value: "world",
 		}
 
-		got := r.Encode()
+		got := r.encode()
 
 		expected := []byte{
 			0x01,
@@ -36,7 +36,7 @@ func TestEncode(t *testing.T) {
 			value: "",
 		}
 
-		got := r.Encode()
+		got := r.encode()
 
 		expected := []byte{
 			0x02,
@@ -61,7 +61,7 @@ func TestDecodeRecord(t *testing.T) {
 			'w', 'o', 'r', 'l', 'd',
 		}
 
-		got, err := DecodeRecord(data)
+		got, err := decodeRecord(data)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -79,7 +79,7 @@ func TestDecodeRecord(t *testing.T) {
 			'h', 'e', 'l', 'l', 'o',
 		}
 
-		got, err := DecodeRecord(data)
+		got, err := decodeRecord(data)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -91,7 +91,7 @@ func TestDecodeRecord(t *testing.T) {
 
 	t.Run("less than 5 bytes data", func(t *testing.T) {
 		data := []byte{0x01, 0x00, 0x05, 0x00}
-		_, err := DecodeRecord(data)
+		_, err := decodeRecord(data)
 		if err == nil {
 			t.Error("expected error for less than 5 bytes data")
 		} else if !errors.Is(err, ErrInvalidSSTableRecord) {
@@ -107,7 +107,7 @@ func TestDecodeRecord(t *testing.T) {
 			'h', 'e', 'l', 'l', 'o',
 			'w', 'o', 'r', 'l', 'd',
 		}
-		_, err := DecodeRecord(data)
+		_, err := decodeRecord(data)
 		if err == nil {
 			t.Error("expected error for unknown record type")
 		} else if !errors.Is(err, ErrInvalidSSTableRecord) {
@@ -123,7 +123,7 @@ func TestDecodeRecord(t *testing.T) {
 			'h', 'e', 'l', 'l', 'o',
 			'w', 'o', 'r', 'l', 'd',
 		}
-		_, err := DecodeRecord(data)
+		_, err := decodeRecord(data)
 		if err == nil {
 			t.Error("expected error for delete with value")
 		} else if !errors.Is(err, ErrInvalidSSTableRecord) {
@@ -139,7 +139,7 @@ func TestDecodeRecord(t *testing.T) {
 			'h', 'e', 'l', 'l', 'o',
 			'w', 'o', 'r', 'l', // missing 'd'
 		}
-		_, err := DecodeRecord(data)
+		_, err := decodeRecord(data)
 		if err == nil {
 			t.Error("expected error for truncated key value")
 		} else if !errors.Is(err, ErrInvalidSSTableRecord) {
@@ -156,7 +156,7 @@ func TestDecodeRecord(t *testing.T) {
 			'w', 'o', 'r', 'l', 'd',
 			'e', 'x', 't', 'r', 'a',
 		}
-		_, err := DecodeRecord(data)
+		_, err := decodeRecord(data)
 		if err == nil {
 			t.Error("expected error for trailing bytes")
 		} else if !errors.Is(err, ErrInvalidSSTableRecord) {
@@ -171,8 +171,8 @@ func TestDecodeRecord(t *testing.T) {
 			value: "test",
 		}
 
-		encoded := orig.Encode()
-		decoded, err := DecodeRecord(encoded)
+		encoded := orig.encode()
+		decoded, err := decodeRecord(encoded)
 
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

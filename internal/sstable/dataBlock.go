@@ -18,7 +18,7 @@ func createBlock(records []*record) (block []byte, offsetDelta uint64) {
 	binary.BigEndian.PutUint32(block[:4], uint32(dataLen))
 
 	for _, rec := range records {
-		block = append(block, rec.Encode()...)
+		block = append(block, rec.encode()...)
 	}
 
 	// Add the checksum over the length prefix and data

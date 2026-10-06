@@ -21,7 +21,7 @@ const (
 
 var ErrInvalidSSTableRecord error = errors.New("Invalid record")
 
-func (r *record) Encode() []byte {
+func (r *record) encode() []byte {
 	// [type][key_len][value_len][key_bytes][value_bytes]
 	recordLen := 1 + 2 + 2 + len(r.key) + len(r.value)
 	buf := make([]byte, recordLen)
@@ -37,7 +37,7 @@ func (r *record) Encode() []byte {
 	return buf
 }
 
-func DecodeRecord(data []byte) (*record, error) {
+func decodeRecord(data []byte) (*record, error) {
 	if len(data) < 5 {
 		return nil, fmt.Errorf("sstable: record decoding: at least 5 bytes are required: %w", ErrInvalidSSTableRecord)
 	}
