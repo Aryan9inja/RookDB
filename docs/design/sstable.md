@@ -102,3 +102,7 @@ At startup, discover files matching this pattern, sort by generation in descendi
 The writer completes and checksums all data blocks, writes the sparse index and its checksum, writes the Bloom filter and its checksum, then writes the footer and its checksum. A valid complete footer marks finalization; bytes earlier in the file do not.
 
 File publication and synchronization preserve the finalization boundary across crashes. Incomplete files are excluded during discovery. The WAL remains the recovery source for mutations that are not represented by finalized SSTables.
+
+## Invarient for SSTable Handlers
+
+SSTable handlers are maintained in descending creation/generation order, newest first. The first storage layer containing an entry determines the result.
