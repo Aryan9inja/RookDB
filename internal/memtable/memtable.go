@@ -52,8 +52,8 @@ type entry struct {
 type entryType uint8
 
 const (
-	setEntry    entryType = 0x01
-	deleteEntry entryType = 0x02
+	SetEntry    entryType = 0x01
+	DeleteEntry entryType = 0x02
 )
 
 func newSkipList() *skipList {
@@ -87,7 +87,7 @@ func NewMemTable() *MemTable {
 }
 
 func (mTable *MemTable) Put(key, value string) {
-	sizeDelta := mTable.list.putNode(setEntry, key, value)
+	sizeDelta := mTable.list.putNode(SetEntry, key, value)
 	mTable.approxSize += sizeDelta
 }
 
@@ -96,7 +96,7 @@ func (mTable *MemTable) Get(key string) (string, entryType, bool) {
 }
 
 func (mTable *MemTable) Delete(key string) {
-	sizeDelta := mTable.list.putNode(deleteEntry, key, "")
+	sizeDelta := mTable.list.putNode(DeleteEntry, key, "")
 	mTable.approxSize += sizeDelta
 }
 
@@ -177,17 +177,17 @@ func (list *skipList) putNodeWithHeight(t entryType, k, v string, height int) (s
 		old := candidate.listEntry
 
 		// SET -> DELETE && DELETE -> DELETE
-		if t == deleteEntry {
-			if old.eType == setEntry {
+		if t == DeleteEntry {
+			if old.eType == SetEntry {
 				sizeDelta = -int64(len(old.value))
 				old.value = ""
-				old.eType = deleteEntry
+				old.eType = DeleteEntry
 			}
 			return
 		}
 
 		// SET -> SET
-		if old.eType == setEntry {
+		if old.eType == SetEntry {
 			sizeDelta = int64(len(v) - len(old.value))
 			old.value = v
 			return
@@ -196,7 +196,7 @@ func (list *skipList) putNodeWithHeight(t entryType, k, v string, height int) (s
 		// DELETE → SET
 		sizeDelta = int64(len(v))
 		old.value = v
-		old.eType = setEntry
+		old.eType = SetEntry
 		return
 	}
 
