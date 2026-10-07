@@ -61,3 +61,21 @@ After a successful `Next()`, the WAL retains the starting offset of that record 
 - The payload, checksum, CRC, and operation decoding must all be valid.
 - The invalid tail is truncated; preceding valid records are retained.
 - At most one returned record is current for semantic validation and truncation.
+
+## WAL generations
+Each active write generation has its own WAL. The WAL records the mutations that populate that generation's MemTable.
+
+A generation transitions through:
+```text
+WAL + current MemTable
+        ↓
+WAL + frozen MemTable
+        ↓
+published SSTable
+        ↓
+WAL reclaimed
+````
+
+The WAL remains the durable recovery source until the corresponding SSTable has been successfully published.
+
+On startup, WALs belonging to generations without a published SSTable are replayed in generation order. Recovery reconstructs the corresponding MemTable state and can repeat the normal flush process.
