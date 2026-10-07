@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/Aryan9inja/RookDB/internal/memtable"
 	"github.com/Aryan9inja/RookDB/internal/operation"
 	"github.com/Aryan9inja/RookDB/internal/wal"
 )
 
 type Engine struct {
-	wal   *wal.WAL
-	store map[string]string
+	wal      *wal.WAL
+	memTable *memtable.MemTable
 }
 
 var ErrKeyNotFound = errors.New("key not found")
@@ -25,8 +26,8 @@ func NewEngine(path string) (*Engine, error) {
 	}
 
 	engine := &Engine{
-		wal:   w,
-		store: make(map[string]string),
+		wal:      w,
+		memTable: memtable.NewMemTable(),
 	}
 
 	if err := engine.recover(); err != nil {
@@ -104,8 +105,8 @@ func (engine *Engine) delete(key string) error {
 }
 
 func (engine *Engine) get(key string) (string, error) {
-	value, exists := engine.store[key]
-	if !exists {
+	value, eType, exists := engine.memTable.Get(key)
+	if !exists || eType == memtable.DeleteEntry {
 		return "", ErrKeyNotFound
 	}
 
@@ -138,10 +139,10 @@ func validateOperation(op operation.Operation) error {
 func (engine *Engine) applyOperation(op operation.Operation) {
 	switch op.OpType {
 	case operation.Set:
-		engine.store[op.Key] = op.Value
+		engine.memTable.Put(op.Key, op.Value)
 
 	case operation.Delete:
-		delete(engine.store, op.Key)
+		engine.memTable.Delete(op.Key)
 	}
 }
 

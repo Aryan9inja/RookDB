@@ -52,7 +52,7 @@ func BenchmarkEngineGet(b *testing.B) {
 		value := fmt.Sprintf("value%d", i)
 
 		keys[i] = key
-		engine.store[key] = value
+		engine.set(key, value)
 	}
 
 	b.ResetTimer()
