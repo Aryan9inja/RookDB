@@ -15,6 +15,11 @@ type Handler struct {
 	reader *SSTableReader
 }
 
+const (
+	SetEntry    = setRecord
+	DeleteEntry = deleteRecord
+)
+
 func newHandler(path string) (*Handler, error) {
 	ssReader, err := newSSTableReader(path)
 	if err != nil {
