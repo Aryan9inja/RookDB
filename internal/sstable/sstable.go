@@ -1,6 +1,7 @@
 package sstable
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,15 +10,22 @@ import (
 )
 
 type Handler struct {
-	name string
-	path string
+	name   string
+	path   string
+	reader *SSTableReader
 }
 
-func newHandler(path string) *Handler {
-	return &Handler{
-		name: filepath.Base(path),
-		path: path,
+func newHandler(path string) (*Handler, error) {
+	ssReader, err := newSSTableReader(path)
+	if err != nil {
+		return nil, fmt.Errorf("error creating sstable reader: %w", err)
 	}
+
+	return &Handler{
+		name:   filepath.Base(path),
+		path:   path,
+		reader: ssReader,
+	}, nil
 }
 
 func Discover(dataDir string) ([]*Handler, error) {
@@ -45,12 +53,18 @@ func Discover(dataDir string) ([]*Handler, error) {
 	handlers := make([]*Handler, len(matches))
 	for i, file := range matches {
 		if err := parseFileName(file); err != nil {
-			return nil, fmt.Errorf("error in file validation: %v: %w", file, err)
+			if err := cleanupDiscover(handlers); err != nil {
+				return nil, fmt.Errorf("error cleaning up handlers after validation faliure: %w", err)
+			}
+			return nil, fmt.Errorf("error in file validation: %s: %w", file, err)
 		}
 
-		handlers[i] = &Handler{
-			name: filepath.Base(file),
-			path: file,
+		handlers[i], err = newHandler(file)
+		if err != nil {
+			if err := cleanupDiscover(handlers); err != nil {
+				return nil, fmt.Errorf("error cleaning up handlers after handler construction faliure: %w", err)
+			}
+			return nil, fmt.Errorf("error creating handler for sstable path: %s: with error: %w", file, err)
 		}
 	}
 
@@ -70,4 +84,17 @@ func parseFileName(file string) error {
 	}
 
 	return nil
+}
+
+func cleanupDiscover(handlers []*Handler) error {
+	var allErrors []error
+	for _, h := range handlers {
+		if h == nil {
+			continue
+		}
+		if err := h.reader.close(); err != nil {
+			allErrors = append(allErrors, err)
+		}
+	}
+	return errors.Join(allErrors...)
 }
