@@ -127,12 +127,32 @@ func (engine *Engine) delete(key string) error {
 }
 
 func (engine *Engine) get(key string) (string, error) {
+	// look in memtable
 	value, eType, exists := engine.memTable.Get(key)
-	if !exists || eType == memtable.DeleteEntry {
-		return "", ErrKeyNotFound
+	if exists {
+		if eType == memtable.DeleteEntry {
+			return "", ErrKeyNotFound
+		} else {
+			return value, nil
+		}
 	}
 
-	return value, nil
+	// look in sstables sequentially
+	for _, ss := range engine.sstables {
+		value, eType, exists, err := ss.Get(key)
+		if err != nil {
+			return "", fmt.Errorf("error getting key %q from SSTable: %w", key, err)
+		}
+		if exists {
+			if eType == sstable.DeleteEntry {
+				return "", ErrKeyNotFound
+			} else {
+				return value, nil
+			}
+		}
+	}
+
+	return "", ErrKeyNotFound
 }
 
 func validateOperation(op operation.Operation) error {
