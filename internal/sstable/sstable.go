@@ -32,6 +32,10 @@ func (h *Handler) Get(target string) (string, recordType, bool, error) {
 	return h.reader.get(target)
 }
 
+func (h *Handler) Close() error {
+	return h.reader.close()
+}
+
 func Discover(dataDir string) ([]*Handler, error) {
 	path, err := filepath.Abs(dataDir)
 	if err != nil {
