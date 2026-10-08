@@ -4,6 +4,9 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+
+	"github.com/Aryan9inja/RookDB/internal/memtable"
+	"github.com/Aryan9inja/RookDB/internal/sstable"
 )
 
 func TestEngine(t *testing.T) {
@@ -24,20 +27,6 @@ func TestEngine(t *testing.T) {
 		}
 		if got != value {
 			t.Fatalf("Expected got to be %v but it is %v", value, got)
-		}
-	})
-
-	t.Run("get missing key", func(t *testing.T) {
-		engine := newTestEngine(t)
-		defer engine.Close()
-
-		key := "missing"
-		got, err := engine.get(key)
-		if !errors.Is(err, ErrKeyNotFound) {
-			t.Fatalf("engine test: get missing key: expected error to be %v, got %v", ErrKeyNotFound, err)
-		}
-		if got != "" {
-			t.Fatalf("engine test: get missing key: expected empty string but got %v", got)
 		}
 	})
 
@@ -98,9 +87,8 @@ func TestEngine(t *testing.T) {
 
 	t.Run("persistance across restarts", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, "wal.log")
 
-		engine1 := newTestEngineAtPath(t, path)
+		engine1 := newTestEngineAtDir(t, dir)
 
 		key := "name"
 		value := "Aryan"
@@ -113,7 +101,7 @@ func TestEngine(t *testing.T) {
 			t.Fatalf("engine test: persistence across restarts: Close: %v", err)
 		}
 
-		engine2 := newTestEngineAtPath(t, path)
+		engine2 := newTestEngineAtDir(t, dir)
 		defer engine2.Close()
 
 		got, err := engine2.get(key)
@@ -127,13 +115,120 @@ func TestEngine(t *testing.T) {
 	})
 }
 
+func TestGetKey(t *testing.T) {
+	dir := t.TempDir()
+
+	// create some sstables
+	mTable1 := memtable.NewMemTable()
+	mTable1.Put("name", "aryan")
+	mTable1.Put("age", "22")
+	mTable1.Delete("test")
+
+	if err := sstable.WriteSSTable(mTable1, filepath.Join(dir, "000002.sst")); err != nil {
+		t.Fatalf("get key test setup failed: write sstable 000002: %v", err)
+	}
+
+	mTable2 := memtable.NewMemTable()
+	mTable2.Put("test", "yay")
+
+	if err := sstable.WriteSSTable(mTable2, filepath.Join(dir, "000001.sst")); err != nil {
+		t.Fatalf("get key test setup failed: write sstable 000001: %v", err)
+	}
+
+	engine := newTestEngineAtDir(t, dir)
+	if err := engine.delete("name"); err != nil {
+		t.Fatalf("get key test setup failed: write memtabe entry 1: %v", err)
+	}
+	if err := engine.set("check", "what"); err != nil {
+		t.Fatalf("get key test setup failed: write memtabe entry 2: %v", err)
+	}
+
+	t.Run("key-value present in memtable", func(t *testing.T) {
+		target := "check"
+		expected := "what"
+
+		got, err := engine.get(target)
+		if err != nil {
+			t.Fatalf("get key test: key-value present in memtable: %v", err)
+		}
+
+		if got != expected {
+			t.Fatalf("get key test: key-value present in memtable: wrong value")
+		}
+	})
+
+	t.Run("tombstone in memtable", func(t *testing.T) {
+		target := "name"
+		expected := ""
+
+		got, err := engine.get(target)
+		if err == nil {
+			t.Fatalf("get key test: tombstone in memtable: expected err: %v, got nil", ErrKeyNotFound)
+		}
+		if !errors.Is(err, ErrKeyNotFound) {
+			t.Fatalf("get key test: tombstone in memtable: expected err: %v, got %v", ErrKeyNotFound, err)
+		}
+
+		if got != expected {
+			t.Fatalf("get key test: tombstone in memtable: wrong value")
+		}
+	})
+
+	t.Run("key value present in sstable", func(t *testing.T) {
+		target := "age"
+		expected := "22"
+
+		got, err := engine.get(target)
+		if err != nil {
+			t.Fatalf("get key test: key value present in sstable: %v", err)
+		}
+
+		if got != expected {
+			t.Fatalf("get key test: key value present in sstable: wrong value")
+		}
+	})
+
+	t.Run("tombstone in latest sstable", func(t *testing.T) {
+		target := "test"
+		expected := ""
+
+		got, err := engine.get(target)
+		if err == nil {
+			t.Fatalf("get key test: tombstone in latest sstable: expected err: %v, got nil", ErrKeyNotFound)
+		}
+		if !errors.Is(err, ErrKeyNotFound) {
+			t.Fatalf("get key test: tombstone in latest sstable: expected err: %v, got %v", ErrKeyNotFound, err)
+		}
+
+		if got != expected {
+			t.Fatalf("get key test: tombstone in latest sstable: wrong value")
+		}
+	})
+
+	t.Run("missing key in both memtable and sstable", func(t *testing.T) {
+		target := "missing"
+		expected := ""
+
+		got, err := engine.get(target)
+		if err == nil {
+			t.Fatalf("get key test: missing key in both memtable and sstable: expected err: %v, got nil", ErrKeyNotFound)
+		}
+		if !errors.Is(err, ErrKeyNotFound) {
+			t.Fatalf("get key test: missing key in both memtable and sstable: expected err: %v, got %v", ErrKeyNotFound, err)
+		}
+
+		if got != expected {
+			t.Fatalf("get key test: missing key in both memtable and sstable: wrong value")
+		}
+	})
+}
+
 func newTestEngine(t *testing.T) *Engine {
 	t.Helper()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "wal.log")
 
-	engine, err := NewEngine(path)
+	engine, err := NewEngine(dir)
 	if err != nil {
 		t.Fatalf("setup Engine: %v", err)
 	}
@@ -141,7 +236,7 @@ func newTestEngine(t *testing.T) *Engine {
 	return engine
 }
 
-func newTestEngineAtPath(t *testing.T, path string) *Engine {
+func newTestEngineAtDir(t *testing.T, path string) *Engine {
 	t.Helper()
 
 	engine, err := NewEngine(path)
