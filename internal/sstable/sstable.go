@@ -2,6 +2,7 @@ package sstable
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -25,9 +26,16 @@ func Discover(dataDir string) ([]*Handler, error) {
 		return nil, fmt.Errorf("error discovering data dir: %w", err)
 	}
 
-	matches, err := filepath.Glob(filepath.Join(path, "*.sst"))
+	entries, err := os.ReadDir(path)
 	if err != nil {
-		return nil, fmt.Errorf("error finding sstable file in %v", path)
+		return nil, fmt.Errorf("error reading data directory %q: %w", path, err)
+	}
+
+	var matches []string
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".sst" {
+			matches = append(matches, filepath.Join(path, entry.Name()))
+		}
 	}
 
 	sort.Slice(matches, func(i, j int) bool {
@@ -52,7 +60,7 @@ func Discover(dataDir string) ([]*Handler, error) {
 func parseFileName(file string) error {
 	fileName := filepath.Base(file)
 
-	ok, err := regexp.MatchString(`[0-9]{6}\.sst`, fileName)
+	ok, err := regexp.MatchString(`^[0-9]{6}\.sst$`, fileName)
 	if err != nil {
 		return fmt.Errorf("error validating file name: %w", err)
 	}
