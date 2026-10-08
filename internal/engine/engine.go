@@ -4,36 +4,46 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	"github.com/Aryan9inja/RookDB/internal/memtable"
 	"github.com/Aryan9inja/RookDB/internal/operation"
+	"github.com/Aryan9inja/RookDB/internal/sstable"
 	"github.com/Aryan9inja/RookDB/internal/wal"
 )
 
 type Engine struct {
 	wal      *wal.WAL
 	memTable *memtable.MemTable
+	sstables []*sstable.Handler
 }
 
 var ErrKeyNotFound = errors.New("key not found")
 var ErrUnsupportedCommand = errors.New("unsupported command")
 var ErrStorageFailure = errors.New("storage failure")
 
-func NewEngine(path string) (*Engine, error) {
-	w, err := wal.NewWAL(path)
+func NewEngine(dataDir string) (*Engine, error) {
+	w, err := wal.NewWAL(filepath.Join(dataDir, "rookdb.wal"))
 	if err != nil {
 		return nil, fmt.Errorf("new engine: new wal: %w", err)
+	}
+
+	handlers, err := sstable.Discover(dataDir)
+	if err != nil {
+		_ = w.Close()
+		return nil, fmt.Errorf("new engine: discover sstables: %w", err)
 	}
 
 	engine := &Engine{
 		wal:      w,
 		memTable: memtable.NewMemTable(),
+		sstables: handlers,
 	}
 
 	if err := engine.recover(); err != nil {
-		if closeErr := engine.wal.Close(); closeErr != nil {
+		if closeErr := engine.Close(); closeErr != nil {
 			return nil, fmt.Errorf(
-				"new engine: recover: %w; close wal: %v",
+				"new engine: recover: %w; close resources: %v",
 				err,
 				closeErr,
 			)
@@ -46,7 +56,19 @@ func NewEngine(path string) (*Engine, error) {
 }
 
 func (engine *Engine) Close() error {
-	return engine.wal.Close()
+	var closeErrs []error
+
+	for _, h := range engine.sstables {
+		if err := h.Close(); err != nil {
+			closeErrs = append(closeErrs, err)
+		}
+	}
+
+	if err := engine.wal.Close(); err != nil {
+		closeErrs = append(closeErrs, err)
+	}
+
+	return errors.Join(closeErrs...)
 }
 
 func (engine *Engine) Execute(command, key, value string) (string, error) {
