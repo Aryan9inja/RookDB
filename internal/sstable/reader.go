@@ -14,7 +14,7 @@ type SSTableReader struct {
 
 const maxExpectedBlockSize = 10240 // 10 KB
 
-func NewSSTableReader(path string) (*SSTableReader, error) {
+func newSSTableReader(path string) (*SSTableReader, error) {
 	fd, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("error opening sstable file: %w", err)
@@ -26,14 +26,14 @@ func NewSSTableReader(path string) (*SSTableReader, error) {
 	}, nil
 }
 
-func (reader *SSTableReader) Close() error {
+func (reader *SSTableReader) close() error {
 	if err := reader.fd.Close(); err != nil {
 		return fmt.Errorf("error closing sstable file: %w", err)
 	}
 	return nil
 }
 
-func (reader *SSTableReader) Get(target string) (string, recordType, bool, error) {
+func (reader *SSTableReader) get(target string) (string, recordType, bool, error) {
 	if err := reader.footerReader(); err != nil {
 		return "", 0, false, fmt.Errorf("error reading file footer: %w", err)
 	}

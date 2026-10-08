@@ -27,7 +27,7 @@ func TestSSTableReader(t *testing.T) {
 		t.Fatalf("WriteSSTable failed: %v", err)
 	}
 
-	reader, err := NewSSTableReader(tempFile)
+	reader, err := newSSTableReader(tempFile)
 	if err != nil {
 		t.Fatalf("NewSSTableReader failed: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestSSTableReader(t *testing.T) {
 
 	t.Run("test Get", func(t *testing.T) {
 		// Test existing keys
-		val, rType, found, err := reader.Get("1")
+		val, rType, found, err := reader.get("1")
 		if err != nil {
 			t.Fatalf("Get failed with error: %v", err)
 		}
@@ -158,7 +158,7 @@ func TestSSTableReader(t *testing.T) {
 		}
 
 		// Test deleted keys (tombstones)
-		val, rType, found, err = reader.Get("5") // 5%5 == 0, deleted
+		val, rType, found, err = reader.get("5") // 5%5 == 0, deleted
 		if err != nil {
 			t.Fatalf("Get failed with error: %v", err)
 		}
@@ -167,7 +167,7 @@ func TestSSTableReader(t *testing.T) {
 		}
 
 		// Test non-existent keys
-		_, _, found, err = reader.Get("9999")
+		_, _, found, err = reader.get("9999")
 		if err != nil {
 			t.Fatalf("Get failed with error: %v", err)
 		}
