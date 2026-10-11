@@ -86,6 +86,10 @@ func NewMemTable() *MemTable {
 	}
 }
 
+func (mTable *MemTable) NeedFlush() bool {
+	return mTable.approxSize >= MemTableFlushThreshold
+}
+
 func (mTable *MemTable) Put(key, value string) {
 	sizeDelta := mTable.list.putNode(SetEntry, key, value)
 	mTable.approxSize += sizeDelta
