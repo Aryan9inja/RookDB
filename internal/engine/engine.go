@@ -209,3 +209,37 @@ func (engine *Engine) recover() error {
 		engine.applyOperation(*op)
 	}
 }
+
+func recoverGeneration(walPath string, memT *memtable.MemTable) error {
+	w, err := wal.NewWAL(walPath)
+	if err != nil {
+		return fmt.Errorf("error opening wal file: %w", err)
+	}
+	defer w.Close()
+
+	for {
+		op, err := wal.Next(w)
+		if errors.Is(err, io.EOF) {
+			// recovery succeeded
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("engine: recovery error: %w", err)
+		}
+
+		if err := validateOperation(*op); err != nil {
+			if err := w.TruncateCurrentRecord(); err != nil {
+				return fmt.Errorf("engine: recovery error: truncate invalid records: %w", err)
+			}
+			return fmt.Errorf("engine: recovery error: %w", err)
+		}
+
+		// Apply valid operation
+		switch op.OpType {
+		case operation.Set:
+			memT.Put(op.Key, op.Value)
+
+		case operation.Delete:
+			memT.Delete(op.Key)
+		}
+	}
+}
