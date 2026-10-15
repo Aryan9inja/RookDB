@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/Aryan9inja/RookDB/internal/memtable"
 	"github.com/Aryan9inja/RookDB/internal/operation"
@@ -13,8 +17,15 @@ import (
 )
 
 type Engine struct {
+	dataDir string
+	currGen string
+
 	wal      *wal.WAL
 	memTable *memtable.MemTable
+
+	frozenWal      *wal.WAL
+	frozenMemTable *memtable.MemTable
+
 	sstables []*sstable.Handler
 }
 
@@ -23,7 +34,24 @@ var ErrUnsupportedCommand = errors.New("unsupported command")
 var ErrStorageFailure = errors.New("storage failure")
 
 func NewEngine(dataDir string) (*Engine, error) {
-	w, err := wal.NewWAL(filepath.Join(dataDir, "rookdb.wal"))
+	genStrings, err := filepath.Glob(filepath.Join(dataDir, "*.wal"))
+	if err != nil {
+		return nil, fmt.Errorf("new engine: could not get wal generations: %w", err)
+	}
+
+	for i, gen := range genStrings {
+		genStrings[i] = strings.TrimSuffix(filepath.Base(gen), ".wal")
+	}
+
+	slices.Sort(genStrings)
+	var currGen string
+	if len(genStrings) == 0 {
+		currGen = "000001"
+	} else {
+		currGen = genStrings[0]
+	}
+
+	w, err := wal.NewWAL(filepath.Join(dataDir, fmt.Sprintf("%s.wal", currGen)))
 	if err != nil {
 		return nil, fmt.Errorf("new engine: new wal: %w", err)
 	}
@@ -35,6 +63,8 @@ func NewEngine(dataDir string) (*Engine, error) {
 	}
 
 	engine := &Engine{
+		dataDir:  dataDir,
+		currGen:  currGen,
 		wal:      w,
 		memTable: memtable.NewMemTable(),
 		sstables: handlers,
@@ -69,6 +99,32 @@ func (engine *Engine) Close() error {
 	}
 
 	return errors.Join(closeErrs...)
+}
+
+func (engine *Engine) CreateNewGeneration() error {
+	currGenInt, err := strconv.Atoi(engine.currGen)
+	if err != nil {
+		return fmt.Errorf("error parsing current gen: %w", err)
+	}
+
+	nextGenInt := currGenInt + 1
+	nextGen := fmt.Sprintf("%06d", nextGenInt)
+
+	newWal, err := wal.NewWAL(filepath.Join(engine.dataDir, fmt.Sprintf("%s.wal", nextGen)))
+	if err != nil {
+		return fmt.Errorf("error creating new gen wal: %w", err)
+	}
+
+	// freeze old wal and memtable
+	engine.frozenWal = engine.wal
+	engine.frozenMemTable = engine.memTable
+
+	// assign new wal and memTable
+	engine.wal = newWal
+	engine.memTable = memtable.NewMemTable()
+	engine.currGen = nextGen
+
+	return nil
 }
 
 func (engine *Engine) Execute(command, key, value string) (string, error) {
@@ -186,28 +242,44 @@ func (engine *Engine) applyOperation(op operation.Operation) {
 	case operation.Delete:
 		engine.memTable.Delete(op.Key)
 	}
+
+	if engine.memTable.NeedFlush() {
+
+	}
 }
 
 func (engine *Engine) recover() error {
-	for {
-		op, err := wal.Next(engine.wal)
-		if errors.Is(err, io.EOF) {
-			// recovery succeeded
-			return nil
-		} else if err != nil {
-			return fmt.Errorf("engine: recovery error: %w", err)
-		}
-
-		if err := validateOperation(*op); err != nil {
-			if err := engine.wal.TruncateCurrentRecord(); err != nil {
-				return fmt.Errorf("engine: recovery error: truncate invalid records: %w", err)
-			}
-			return fmt.Errorf("engine: recovery error: %w", err)
-		}
-
-		// Apply valid operation
-		engine.applyOperation(*op)
+	wals, err := filepath.Glob(filepath.Join(engine.dataDir, "*.wal"))
+	if err != nil {
+		return fmt.Errorf("error getting wal names for recovery: %w", err)
 	}
+
+	for i, w := range wals {
+		wals[i] = strings.TrimSuffix(filepath.Base(w), ".wal")
+		ok, err := regexp.MatchString(`^[0-9]{6}$`, wals[i])
+		if err != nil {
+			return fmt.Errorf("error validating wal file name: %w", err)
+		}
+		if !ok {
+			return fmt.Errorf("unrecognized file format for wal")
+		}
+	}
+
+	slices.Sort(wals)
+	sstableSet := make(map[string]struct{}, len(engine.sstables))
+	for _, s := range engine.sstables {
+		sstableSet[s.Name()] = struct{}{}
+	}
+
+	for _, w := range wals {
+		if _, ok := sstableSet[w]; !ok {
+			if err := recoverGeneration(filepath.Join(engine.dataDir, w+".wal"), engine.memTable); err != nil {
+				return fmt.Errorf("error recovering wal gen: %w", err)
+			}
+		}
+	}
+
+	return nil
 }
 
 func recoverGeneration(walPath string, memT *memtable.MemTable) error {
