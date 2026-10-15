@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 type Handler struct {
@@ -27,7 +28,7 @@ func newHandler(path string) (*Handler, error) {
 	}
 
 	return &Handler{
-		name:   filepath.Base(path),
+		name:   strings.TrimSuffix(filepath.Base(path), ".sst"),
 		path:   path,
 		reader: ssReader,
 	}, nil
@@ -35,6 +36,10 @@ func newHandler(path string) (*Handler, error) {
 
 func (h *Handler) Get(target string) (string, recordType, bool, error) {
 	return h.reader.get(target)
+}
+
+func (h *Handler) Name() string {
+	return h.name
 }
 
 func (h *Handler) Close() error {
