@@ -271,12 +271,18 @@ func (engine *Engine) recover() error {
 		sstableSet[s.Name()] = struct{}{}
 	}
 
+	var currRecoveredGen string
 	for _, w := range wals {
 		if _, ok := sstableSet[w]; !ok {
+			currRecoveredGen = w
 			if err := recoverGeneration(filepath.Join(engine.dataDir, w+".wal"), engine.memTable); err != nil {
 				return fmt.Errorf("error recovering wal gen: %w", err)
 			}
 		}
+	}
+
+	if currRecoveredGen != "" {
+		engine.currGen = currRecoveredGen
 	}
 
 	return nil
