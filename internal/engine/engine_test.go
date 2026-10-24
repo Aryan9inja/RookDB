@@ -2,11 +2,14 @@ package engine
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/Aryan9inja/RookDB/internal/memtable"
+	"github.com/Aryan9inja/RookDB/internal/operation"
 	"github.com/Aryan9inja/RookDB/internal/sstable"
+	"github.com/Aryan9inja/RookDB/internal/wal"
 )
 
 func TestEngine(t *testing.T) {
@@ -219,6 +222,120 @@ func TestGetKey(t *testing.T) {
 
 		if got != expected {
 			t.Fatalf("get key test: missing key in both memtable and sstable: wrong value")
+		}
+	})
+}
+
+func TestRecovery(t *testing.T) {
+	t.Run("empty data directory creates 000001.wal and empty memtable", func(t *testing.T) {
+		testEngine := newTestEngine(t)
+
+		if testEngine.currGen != "000001" {
+			t.Fatalf("expected generation to be 000001, instead got: %v", testEngine.currGen)
+		}
+
+		if testEngine.memTable.EntryCount() != 0 {
+			t.Fatalf("expected empty memtable on empty directory recovery")
+		}
+	})
+
+	t.Run("directory containing only 000003.sst creates 000004.wal", func(t *testing.T) {
+		dir := t.TempDir()
+		sstFile := filepath.Join(dir, "000003.sst")
+
+		if _, err := os.Create(sstFile); err != nil {
+			t.Fatalf("test setup failed, can't create 000003.sst: %v", err)
+		}
+
+		testEngine := newTestEngineAtDir(t, dir)
+
+		if testEngine.currGen != "000004" {
+			t.Fatalf("expected generation to be 000004, instead got: %v", testEngine.currGen)
+		}
+	})
+
+	t.Run("unrecovered wal branch", func(t *testing.T) {
+		dir := t.TempDir()
+
+		sstFile := filepath.Join(dir, "000001.sst")
+		if _, err := os.Create(sstFile); err != nil {
+			t.Fatalf("test setup failed, can't create 000001.sst: %v", err)
+		}
+
+		oldWal1_Path := filepath.Join(dir, "000002.wal")
+		oldWal1, err := wal.NewWAL(oldWal1_Path)
+		if err != nil {
+			t.Fatalf("test setup failed, can't create 000002.wal: %v", err)
+		}
+
+		oldWal1_ops := []operation.Operation{
+			{
+				OpType: operation.Set,
+				Key:    "name",
+				Value:  "Aryan",
+			},
+			{
+				OpType: operation.Set,
+				Key:    "age",
+				Value:  "22",
+			},
+		}
+
+		for _, op := range oldWal1_ops {
+			if err := wal.Append(oldWal1, op); err != nil {
+				t.Fatalf("test setup failed, can't write 000002.wal's operations: %v", err)
+			}
+		}
+		if err := oldWal1.Close(); err != nil {
+			t.Fatalf("test setup failed, can't close wal 000002 after write")
+		}
+
+		oldWal2_Path := filepath.Join(dir, "000003.wal")
+		oldWal2, err := wal.NewWAL(oldWal2_Path)
+		if err != nil {
+			t.Fatalf("test setup failed, can't create 000003.wal: %v", err)
+		}
+
+		oldWal2_ops := []operation.Operation{
+			{
+				OpType: operation.Set,
+				Key:    "location",
+				Value:  "world",
+			},
+			{
+				OpType: operation.Set,
+				Key:    "true",
+				Value:  "false",
+			},
+		}
+
+		for _, op := range oldWal2_ops {
+			if err := wal.Append(oldWal2, op); err != nil {
+				t.Fatalf("test setup failed, can't write 000003.wal's operations: %v", err)
+			}
+		}
+		if err := oldWal2.Close(); err != nil {
+			t.Fatalf("test setup failed, can't close wal 000003 after write")
+		}
+
+		testEngine := newTestEngineAtDir(t, dir)
+
+		keysToGet := []string{"name", "age", "location", "true"}
+		expectedRes := []string{"Aryan", "22", "world", "false"}
+
+		for i, key := range keysToGet {
+			got, err := testEngine.get(key)
+			if err != nil {
+				t.Fatalf("error getting key: %v: %v", key, err)
+			}
+
+			if got != expectedRes[i] {
+				t.Fatalf("expected get to return :%v, got :%v", expectedRes[i], got)
+			}
+		}
+
+		if testEngine.currGen != "000003" {
+			t.Fatalf("expected current gen to be 000003, got: %v", testEngine.currGen)
 		}
 	})
 }
