@@ -34,38 +34,13 @@ var ErrUnsupportedCommand = errors.New("unsupported command")
 var ErrStorageFailure = errors.New("storage failure")
 
 func NewEngine(dataDir string) (*Engine, error) {
-	genStrings, err := filepath.Glob(filepath.Join(dataDir, "*.wal"))
-	if err != nil {
-		return nil, fmt.Errorf("new engine: could not get wal generations: %w", err)
-	}
-
-	for i, gen := range genStrings {
-		genStrings[i] = strings.TrimSuffix(filepath.Base(gen), ".wal")
-	}
-
-	slices.Sort(genStrings)
-	var currGen string
-	if len(genStrings) == 0 {
-		currGen = "000001"
-	} else {
-		currGen = genStrings[0]
-	}
-
-	w, err := wal.NewWAL(filepath.Join(dataDir, fmt.Sprintf("%s.wal", currGen)))
-	if err != nil {
-		return nil, fmt.Errorf("new engine: new wal: %w", err)
-	}
-
 	handlers, err := sstable.Discover(dataDir)
 	if err != nil {
-		_ = w.Close()
 		return nil, fmt.Errorf("new engine: discover sstables: %w", err)
 	}
 
 	engine := &Engine{
 		dataDir:  dataDir,
-		currGen:  currGen,
-		wal:      w,
 		memTable: memtable.NewMemTable(),
 		sstables: handlers,
 	}
@@ -282,8 +257,46 @@ func (engine *Engine) recover() error {
 	}
 
 	if currRecoveredGen != "" {
+		oldWal, err := wal.NewWAL(filepath.Join(engine.dataDir, fmt.Sprintf("%s.wal", currRecoveredGen)))
+		if err != nil {
+			return fmt.Errorf("error opening old gen wal: %w", err)
+		}
+
 		engine.currGen = currRecoveredGen
+		engine.wal = oldWal
+	} else {
+		if err := engine.newGenDuringRecovery(); err != nil {
+			return fmt.Errorf("error creating new generation: %w", err)
+		}
 	}
+
+	return nil
+}
+
+func (engine *Engine) newGenDuringRecovery() error {
+	var nextGen string
+
+	if len(engine.sstables) == 0 {
+		nextGen = "000001"
+	} else {
+		lastGen := engine.sstables[0].Name()
+
+		lastGenInt, err := strconv.Atoi(lastGen)
+		if err != nil {
+			return fmt.Errorf("error parsing last gen: %w", err)
+		}
+
+		nextGenInt := lastGenInt + 1
+		nextGen = fmt.Sprintf("%06d", nextGenInt)
+	}
+
+	newWal, err := wal.NewWAL(filepath.Join(engine.dataDir, fmt.Sprintf("%s.wal", nextGen)))
+	if err != nil {
+		return fmt.Errorf("error creating new gen wal: %w", err)
+	}
+
+	engine.wal = newWal
+	engine.currGen = nextGen
 
 	return nil
 }
