@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -336,6 +337,46 @@ func TestRecovery(t *testing.T) {
 
 		if testEngine.currGen != "000003" {
 			t.Fatalf("expected current gen to be 000003, got: %v", testEngine.currGen)
+		}
+
+		// execute a command to check where the wal write happens
+		if err := testEngine.set("country", "India"); err != nil {
+			t.Fatalf("set failed after recovery: %v", err)
+		}
+
+		if err := testEngine.Close(); err != nil {
+			t.Fatalf("error closing the engine after set: %v", err)
+		}
+
+		walCheck, err := wal.NewWAL(oldWal2_Path)
+		if err != nil {
+			t.Fatalf("error opening wal file to inspect: %v", err)
+		}
+		defer walCheck.Close()
+
+		var lastOp *operation.Operation
+		for {
+			op, err := wal.Next(walCheck)
+			if errors.Is(err, io.EOF) {
+				break
+			} else if err != nil {
+				t.Fatalf("error getting walCheck operations: %v", err)
+			}
+
+			lastOp = op
+		}
+
+		if lastOp == nil || lastOp.OpType != operation.Set || lastOp.Key != "country" || lastOp.Value != "India" {
+			t.Fatalf("unexpected last operation in wal 000003, %v", lastOp)
+		}
+
+		// verify wal 000004 is not created
+		match, err := filepath.Glob(filepath.Join(dir, "000004.wal"))
+		if err != nil {
+			t.Fatalf("error checking existence of 000004.wal: %v", err)
+		}
+		if len(match) != 0 {
+			t.Fatalf("expected no file with name 000004.wal to be present but got some")
 		}
 	})
 }
