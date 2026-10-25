@@ -27,11 +27,28 @@ type Engine struct {
 	frozenMemTable *memtable.MemTable
 
 	sstables []*sstable.Handler
+
+	flushJobs    chan flushJob
+	flushResults chan flushResult
+}
+
+type flushJob struct {
+	dataDir string
+	generation string
+	wal        *wal.WAL
+	memTable   *memtable.MemTable
+}
+
+type flushResult struct {
+	generation string
+	tempPath   string
+	err        error
 }
 
 var ErrKeyNotFound = errors.New("key not found")
 var ErrUnsupportedCommand = errors.New("unsupported command")
 var ErrStorageFailure = errors.New("storage failure")
+var ErrCannotRotateGen = errors.New("cannot rotate generation")
 
 func NewEngine(dataDir string) (*Engine, error) {
 	handlers, err := sstable.Discover(dataDir)
@@ -40,9 +57,11 @@ func NewEngine(dataDir string) (*Engine, error) {
 	}
 
 	engine := &Engine{
-		dataDir:  dataDir,
-		memTable: memtable.NewMemTable(),
-		sstables: handlers,
+		dataDir:      dataDir,
+		memTable:     memtable.NewMemTable(),
+		sstables:     handlers,
+		flushJobs:    make(chan flushJob),
+		flushResults: make(chan flushResult),
 	}
 
 	if err := engine.recover(); err != nil {
@@ -76,7 +95,44 @@ func (engine *Engine) Close() error {
 	return errors.Join(closeErrs...)
 }
 
+func (engine *Engine) Flush() error {
+	// for sstable generation
+	// gen := engine.currGen
+
+	err := engine.CreateNewGeneration()
+	if errors.Is(err, ErrCannotRotateGen) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("error flushing to storage: %w", err)
+	}
+
+	return nil
+}
+
+func (job *flushJob) flushGeneration() *flushResult {
+	tempFilePath := filepath.Join(job.dataDir, fmt.Sprintf("%s.sst.tmp", job.generation))
+
+	if err:=sstable.WriteSSTable(job.memTable, tempFilePath); err!=nil{
+		return &flushResult{
+			generation: job.generation,
+			tempPath: "",
+			err: fmt.Errorf("error flushing in background: %w", err),
+		}
+	}
+
+	return &flushResult{
+		generation: job.generation,
+		tempPath: tempFilePath,
+		err: nil,
+	}
+}
+
 func (engine *Engine) CreateNewGeneration() error {
+	if engine.frozenWal != nil || engine.frozenMemTable != nil {
+		return fmt.Errorf("%w: frozen generation still exists", ErrCannotRotateGen)
+	}
+
 	currGenInt, err := strconv.Atoi(engine.currGen)
 	if err != nil {
 		return fmt.Errorf("error parsing current gen: %w", err)
