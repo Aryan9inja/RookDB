@@ -89,6 +89,10 @@ func Discover(dataDir string) ([]*Handler, error) {
 	return handlers, nil
 }
 
+func Open(path string) (*Handler, error) {
+	return newHandler(path)
+}
+
 func parseFileName(file string) error {
 	fileName := filepath.Base(file)
 
