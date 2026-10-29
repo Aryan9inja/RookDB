@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/Aryan9inja/RookDB/internal/memtable"
 	"github.com/Aryan9inja/RookDB/internal/operation"
@@ -23,17 +25,27 @@ type Engine struct {
 	wal      *wal.WAL
 	memTable *memtable.MemTable
 
+	frozenGen      string
 	frozenWal      *wal.WAL
 	frozenMemTable *memtable.MemTable
+	frozenSSTable  *sstable.Handler
 
 	sstables []*sstable.Handler
 
 	flushJobs    chan flushJob
 	flushResults chan flushResult
+
+	stopCh    chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup
+
+	lifecycleMu sync.Mutex
+	closing     bool
+	activeOps   sync.WaitGroup
 }
 
 type flushJob struct {
-	dataDir string
+	dataDir    string
 	generation string
 	wal        *wal.WAL
 	memTable   *memtable.MemTable
@@ -49,6 +61,7 @@ var ErrKeyNotFound = errors.New("key not found")
 var ErrUnsupportedCommand = errors.New("unsupported command")
 var ErrStorageFailure = errors.New("storage failure")
 var ErrCannotRotateGen = errors.New("cannot rotate generation")
+var ErrEngineClosed = errors.New("engine is closing or closed")
 
 func NewEngine(dataDir string) (*Engine, error) {
 	handlers, err := sstable.Discover(dataDir)
@@ -62,6 +75,7 @@ func NewEngine(dataDir string) (*Engine, error) {
 		sstables:     handlers,
 		flushJobs:    make(chan flushJob),
 		flushResults: make(chan flushResult),
+		stopCh:       make(chan struct{}),
 	}
 
 	if err := engine.recover(); err != nil {
@@ -76,28 +90,48 @@ func NewEngine(dataDir string) (*Engine, error) {
 		return nil, fmt.Errorf("new engine: recover: %w", err)
 	}
 
+	// spawn go routine to flush in background
+	engine.wg.Add(1)
+	go engine.flushWorker()
+
 	return engine, nil
 }
 
 func (engine *Engine) Close() error {
+	engine.lifecycleMu.Lock()
+	engine.closing = true
+	engine.lifecycleMu.Unlock()
+
+	engine.activeOps.Wait()
+
 	var closeErrs []error
 
-	for _, h := range engine.sstables {
-		if err := h.Close(); err != nil {
-			closeErrs = append(closeErrs, err)
-		}
-	}
+	engine.closeOnce.Do(func() {
+		close(engine.stopCh)
 
-	if err := engine.wal.Close(); err != nil {
-		closeErrs = append(closeErrs, err)
-	}
+		engine.wg.Wait()
+
+		for _, h := range engine.sstables {
+			if err := h.Close(); err != nil {
+				closeErrs = append(closeErrs, err)
+			}
+		}
+
+		if engine.wal != nil {
+			if err := engine.wal.Close(); err != nil {
+				closeErrs = append(closeErrs, err)
+			}
+		}
+	})
 
 	return errors.Join(closeErrs...)
 }
 
 func (engine *Engine) Flush() error {
-	// for sstable generation
-	// gen := engine.currGen
+	if err := engine.beginOperation(); err != nil {
+		return err
+	}
+	defer engine.endOperation()
 
 	err := engine.CreateNewGeneration()
 	if errors.Is(err, ErrCannotRotateGen) {
@@ -110,22 +144,149 @@ func (engine *Engine) Flush() error {
 	return nil
 }
 
+func (engine *Engine) flushWorker() {
+	defer engine.wg.Done()
+	for {
+		select {
+		case <-engine.stopCh:
+			return
+
+		case job, ok := <-engine.flushJobs:
+			if !ok {
+				return
+			}
+			result := job.flushGeneration()
+
+			select {
+			case engine.flushResults <- *result:
+			case <-engine.stopCh:
+				return
+			}
+		}
+	}
+}
+
+func (engine *Engine) flushResConsumer() {
+	defer engine.wg.Done()
+
+	for {
+		select {
+		case <-engine.stopCh:
+			return
+
+		case res, ok := <-engine.flushResults:
+			if !ok {
+				return
+			}
+
+			if err := engine.handleFlushResult(res); err != nil {
+				// TODO: record the error so the Engine can retry
+				// or report it to the caller.
+				continue
+			}
+		}
+	}
+}
+
+func (engine *Engine) handleFlushResult(res flushResult) error {
+	if res.err != nil {
+		return fmt.Errorf("flush generation %s: %w", res.generation, res.err)
+	}
+
+	if res.generation != engine.frozenGen {
+		return fmt.Errorf(
+			"expected generation %s, got %s",
+			engine.frozenGen,
+			res.generation,
+		)
+	}
+
+	if engine.frozenSSTable == nil {
+		if err := engine.publishFrozenSSTable(res); err != nil {
+			return err
+		}
+	}
+
+	return engine.reclaimFrozenWAL()
+}
+
+func (engine *Engine) publishFrozenSSTable(res flushResult) error {
+	finalPath := filepath.Join(
+		engine.dataDir,
+		fmt.Sprintf("%s.sst", res.generation),
+	)
+
+	if err := os.Rename(res.tempPath, finalPath); err != nil {
+		return fmt.Errorf("publish SSTable: %w", err)
+	}
+
+	handler, err := sstable.Open(finalPath)
+	if err != nil {
+		return fmt.Errorf("open published SSTable: %w", err)
+	}
+
+	engine.sstables = append([]*sstable.Handler{handler}, engine.sstables...)
+	engine.frozenSSTable = handler
+
+	return nil
+}
+
+func (engine *Engine) reclaimFrozenWAL() error {
+	walPath := filepath.Join(
+		engine.dataDir,
+		fmt.Sprintf("%s.wal", engine.frozenGen),
+	)
+
+	if engine.frozenWal != nil {
+		if err := engine.frozenWal.Close(); err != nil {
+			return fmt.Errorf("close frozen WAL: %w", err)
+		}
+		engine.frozenWal = nil
+	}
+
+	if err := os.Remove(walPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove frozen WAL: %w", err)
+	}
+
+	engine.frozenMemTable = nil
+	engine.frozenGen = ""
+	engine.frozenSSTable = nil
+
+	return nil
+}
+
 func (job *flushJob) flushGeneration() *flushResult {
 	tempFilePath := filepath.Join(job.dataDir, fmt.Sprintf("%s.sst.tmp", job.generation))
 
-	if err:=sstable.WriteSSTable(job.memTable, tempFilePath); err!=nil{
+	if err := sstable.WriteSSTable(job.memTable, tempFilePath); err != nil {
 		return &flushResult{
 			generation: job.generation,
-			tempPath: "",
-			err: fmt.Errorf("error flushing in background: %w", err),
+			tempPath:   "",
+			err:        fmt.Errorf("error flushing in background: %w", err),
 		}
 	}
 
 	return &flushResult{
 		generation: job.generation,
-		tempPath: tempFilePath,
-		err: nil,
+		tempPath:   tempFilePath,
+		err:        nil,
 	}
+}
+
+func (engine *Engine) beginOperation() error {
+	engine.lifecycleMu.Lock()
+	defer engine.lifecycleMu.Unlock()
+
+	if engine.closing {
+		return ErrEngineClosed
+	}
+
+	engine.activeOps.Add(1)
+	return nil
+}
+
+func (engine *Engine) endOperation() {
+	engine.activeOps.Done()
 }
 
 func (engine *Engine) CreateNewGeneration() error {
@@ -147,6 +308,7 @@ func (engine *Engine) CreateNewGeneration() error {
 	}
 
 	// freeze old wal and memtable
+	engine.frozenGen = engine.currGen
 	engine.frozenWal = engine.wal
 	engine.frozenMemTable = engine.memTable
 
@@ -159,6 +321,11 @@ func (engine *Engine) CreateNewGeneration() error {
 }
 
 func (engine *Engine) Execute(command, key, value string) (string, error) {
+	if err := engine.beginOperation(); err != nil {
+		return "", err
+	}
+	defer engine.endOperation()
+
 	switch command {
 	case "SET":
 		return "", engine.set(key, value)
