@@ -382,37 +382,61 @@ func TestRecovery(t *testing.T) {
 }
 
 func TestFlushGeneration(t *testing.T) {
-	testEngine := newTestEngine(t)
+	t.Run("successful flush", func(t *testing.T) {
+		testEngine := newTestEngine(t)
+		defer testEngine.Close()
 
-	testEngine.set("name", "Aryan")
-	testEngine.set("age", "22")
+		testEngine.set("name", "Aryan")
+		testEngine.set("age", "22")
 
-	// Just for testing
-	// Does not communicate real behaviour
-	job := &flushJob{
-		generation: testEngine.currGen,
-		dataDir:    testEngine.dataDir,
-		wal:        testEngine.wal,
-		memTable:   testEngine.memTable,
-	}
+		// Just for testing
+		// Does not communicate real behaviour
+		job := &flushJob{
+			generation: testEngine.currGen,
+			dataDir:    testEngine.dataDir,
+			wal:        testEngine.wal,
+			memTable:   testEngine.memTable,
+		}
 
-	flushRes := job.flushGeneration()
+		flushRes := job.flushGeneration()
 
-	if flushRes.err != nil {
-		t.Fatalf("expected no error on valid memtable, got: %v", flushRes.err)
-	}
+		if flushRes.err != nil {
+			t.Fatalf("expected no error on valid memtable, got: %v", flushRes.err)
+		}
 
-	if flushRes.generation != "000001" {
-		t.Fatalf("expected flushed generation to be 000001, got: %v", flushRes.generation)
-	}
+		if flushRes.generation != "000001" {
+			t.Fatalf("expected flushed generation to be 000001, got: %v", flushRes.generation)
+		}
 
-	if flushRes.tempPath != filepath.Join(testEngine.dataDir, "000001.sst.tmp") {
-		t.Fatalf("expected temp path for 000001.sst.tmp, got path: %s", flushRes.tempPath)
-	}
+		if flushRes.tempPath != filepath.Join(testEngine.dataDir, "000001.sst.tmp") {
+			t.Fatalf("expected temp path for 000001.sst.tmp, got path: %s", flushRes.tempPath)
+		}
 
-	if _, err := os.Stat(flushRes.tempPath); err != nil {
-		t.Fatalf("expected temporary SSTable to exist: %v", err)
-	}
+		if _, err := os.Stat(flushRes.tempPath); err != nil {
+			t.Fatalf("expected temporary SSTable to exist: %v", err)
+		}
+	})
+
+	t.Run("invalid target directory forces WriteSSTable failure", func(t *testing.T) {
+		testEngine := newTestEngine(t)
+		defer testEngine.Close()
+
+		testEngine.set("name", "Aryan")
+		testEngine.set("age", "22")
+
+		job := &flushJob{
+			generation: testEngine.currGen,
+			dataDir:    filepath.Join(testEngine.dataDir, "nonexistent"),
+			wal:        testEngine.wal,
+			memTable:   testEngine.memTable,
+		}
+
+		flushRes := job.flushGeneration()
+
+		if flushRes.err == nil {
+			t.Fatalf("expected error on invalid target directory, got nil")
+		}
+	})
 }
 
 func newTestEngine(t *testing.T) *Engine {
