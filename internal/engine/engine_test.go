@@ -439,6 +439,210 @@ func TestFlushGeneration(t *testing.T) {
 	})
 }
 
+
+func TestHandleFlushResult(t *testing.T) {
+	t.Run("normal publication and WAL reclamation", func(t *testing.T) {
+		engine, tempPath := setupFrozenEngine(t)
+		defer engine.Close()
+
+		dir := engine.dataDir
+		frozenGen := engine.frozenGen
+		frozenWal := engine.frozenWal
+
+		sstablesBefore := len(engine.sstables)
+
+		res := flushResult{generation: frozenGen, tempPath: tempPath}
+		if err := engine.handleFlushResult(res); err != nil {
+			t.Fatalf("scenario 1: handleFlushResult returned unexpected error: %v", err)
+		}
+
+		finalPath := filepath.Join(dir, frozenGen+".sst")
+		if _, err := os.Stat(finalPath); err != nil {
+			t.Errorf("scenario 1: expected final SSTable %q to exist: %v", finalPath, err)
+		}
+
+		if _, err := os.Stat(tempPath); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("scenario 1: expected temp file %q to be gone after rename", tempPath)
+		}
+
+		if got, want := len(engine.sstables), sstablesBefore+1; got != want {
+			t.Errorf("scenario 1: sstables len = %d, want %d", got, want)
+		}
+
+		if engine.sstables[0].Name() != frozenGen {
+			t.Errorf("scenario 1: sstables[0].Name() = %q, want %q", engine.sstables[0].Name(), frozenGen)
+		}
+
+		if engine.frozenGen != "" {
+			t.Errorf("scenario 1: frozenGen = %q, want empty", engine.frozenGen)
+		}
+		if engine.frozenMemTable != nil {
+			t.Errorf("scenario 1: frozenMemTable should be nil after reclaim")
+		}
+		if engine.frozenSSTable != nil {
+			t.Errorf("scenario 1: frozenSSTable should be nil after reclaim")
+		}
+		if engine.frozenWal != nil {
+			t.Errorf("scenario 1: frozenWal should be nil after reclaim")
+		}
+
+		walPath := filepath.Join(dir, frozenGen+".wal")
+		if _, err := os.Stat(walPath); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("scenario 1: expected WAL %q to be removed from disk", walPath)
+		}
+
+		if err := frozenWal.Close(); err == nil {
+			t.Errorf("scenario 1: expected frozen WAL handle to be closed already (double-close should fail)")
+		}
+	})
+
+	t.Run("publication failure preserves frozen WAL and MemTable", func(t *testing.T) {
+		engine, _ := setupFrozenEngine(t)
+		defer engine.Close()
+
+		frozenGen := engine.frozenGen
+		frozenWal := engine.frozenWal
+		frozenMem := engine.frozenMemTable
+		sstablesBefore := len(engine.sstables)
+
+		res := flushResult{
+			generation: frozenGen,
+			tempPath:   filepath.Join(engine.dataDir, "nonexistent.sst.tmp"),
+		}
+
+		err := engine.handleFlushResult(res)
+		if err == nil {
+			t.Fatal("scenario 2: expected an error when temp file is missing, got nil")
+		}
+
+		if engine.frozenWal != frozenWal {
+			t.Errorf("scenario 2: frozenWal changed after publish failure")
+		}
+
+		if engine.frozenMemTable != frozenMem {
+			t.Errorf("scenario 2: frozenMemTable changed after publish failure")
+		}
+
+		if engine.frozenSSTable != nil {
+			t.Errorf("scenario 2: frozenSSTable should remain nil after publish failure")
+		}
+
+		if engine.frozenGen != frozenGen {
+			t.Errorf("scenario 2: frozenGen changed from %q to %q", frozenGen, engine.frozenGen)
+		}
+
+		if len(engine.sstables) != sstablesBefore {
+			t.Errorf("scenario 2: sstables grew from %d to %d on failure", sstablesBefore, len(engine.sstables))
+		}
+	})
+
+	t.Run("WAL removal failure retains frozen state and published handler", func(t *testing.T) {
+		engine, tempPath := setupFrozenEngine(t)
+		defer engine.Close()
+
+		frozenGen := engine.frozenGen
+		dir := engine.dataDir
+
+		walPath := filepath.Join(dir, frozenGen+".wal")
+		if err := engine.frozenWal.Close(); err != nil {
+			t.Fatalf("scenario 3: pre-close frozen WAL: %v", err)
+		}
+		engine.frozenWal = nil
+
+		if err := os.Remove(walPath); err != nil {
+			t.Fatalf("scenario 3: remove WAL file before mkdir: %v", err)
+		}
+		if err := os.Mkdir(walPath, 0755); err != nil {
+			t.Fatalf("scenario 3: mkdir WAL path: %v", err)
+		}
+		// Place a sentinel file inside so the directory is non-empty.
+		sentinel := filepath.Join(walPath, "sentinel")
+		if f, err := os.Create(sentinel); err != nil {
+			t.Fatalf("scenario 3: create sentinel file: %v", err)
+		} else {
+			f.Close()
+		}
+		defer os.RemoveAll(walPath)
+
+		sstablesBefore := len(engine.sstables)
+
+		res := flushResult{generation: frozenGen, tempPath: tempPath}
+		err := engine.handleFlushResult(res)
+		if err == nil {
+			t.Fatal("scenario 3: expected error when WAL removal fails, got nil")
+		}
+
+		if engine.frozenSSTable == nil {
+			t.Errorf("scenario 3: frozenSSTable should be set after successful publication")
+		}
+
+		if len(engine.sstables) != sstablesBefore+1 {
+			t.Errorf("scenario 3: sstables len = %d, want %d", len(engine.sstables), sstablesBefore+1)
+		}
+
+		// frozenGen and frozenMemTable must still be intact (reclaim didn't finish).
+		if engine.frozenGen != frozenGen {
+			t.Errorf("scenario 3: frozenGen should still be %q, got %q", frozenGen, engine.frozenGen)
+		}
+		if engine.frozenMemTable == nil {
+			t.Errorf("scenario 3: frozenMemTable should still be set")
+		}
+	})
+
+	t.Run("retry after partial reclaim: no duplicate SSTable, no double WAL close", func(t *testing.T) {
+		engine, tempPath := setupFrozenEngine(t)
+		defer engine.Close()
+
+		frozenGen := engine.frozenGen
+		dir := engine.dataDir
+
+		firstRes := flushResult{generation: frozenGen, tempPath: tempPath}
+		if err := engine.publishFrozenSSTable(firstRes); err != nil {
+			t.Fatalf("scenario 4: manual publishFrozenSSTable: %v", err)
+		}
+
+		sstablesAfterPublish := len(engine.sstables)
+		publishedHandler := engine.frozenSSTable
+
+		if err := engine.frozenWal.Close(); err != nil {
+			t.Fatalf("scenario 4: close frozen WAL: %v", err)
+		}
+		engine.frozenWal = nil
+
+		walPath := filepath.Join(dir, frozenGen+".wal")
+		if _, err := os.Stat(walPath); errors.Is(err, os.ErrNotExist) {
+			if f, err := os.Create(walPath); err == nil {
+				f.Close()
+			}
+		}
+
+		retryRes := flushResult{generation: frozenGen, tempPath: tempPath}
+		if err := engine.handleFlushResult(retryRes); err != nil {
+			t.Fatalf("scenario 4: retry handleFlushResult returned error: %v", err)
+		}
+
+		// Assertion 1 – no duplicate SSTable registered.
+		if got, want := len(engine.sstables), sstablesAfterPublish; got != want {
+			t.Errorf("scenario 4: sstables len after retry = %d, want %d (no duplicate)", got, want)
+		}
+
+		// Assertion 2 – the handler pointer is the same object (not a new one).
+		if engine.sstables[0] != publishedHandler {
+			t.Errorf("scenario 4: handler pointer changed on retry – a duplicate was added")
+		}
+
+		if engine.frozenGen != "" {
+			t.Errorf("scenario 4: frozenGen should be empty after successful retry, got %q", engine.frozenGen)
+		}
+		if engine.frozenMemTable != nil {
+			t.Errorf("scenario 4: frozenMemTable should be nil after successful retry")
+		}
+		if engine.frozenSSTable != nil {
+			t.Errorf("scenario 4: frozenSSTable should be nil after successful retry")
+		}
+	})
+}
+
 func newTestEngine(t *testing.T) *Engine {
 	t.Helper()
 
@@ -461,4 +665,35 @@ func newTestEngineAtDir(t *testing.T, path string) *Engine {
 	}
 
 	return engine
+}
+
+// setupFrozenEngine creates an engine that already has a frozen generation
+// ready for handleFlushResult. It returns the engine with:
+//   - frozenGen  = "000001"
+//   - frozenWal  / frozenMemTable populated
+//   - a valid temp SSTable written at <dir>/000001.sst.tmp
+func setupFrozenEngine(t *testing.T) (*Engine, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	engine, err := NewEngine(dir)
+	if err != nil {
+		t.Fatalf("setupFrozenEngine: NewEngine: %v", err)
+	}
+
+	if err := engine.set("key", "value"); err != nil {
+		t.Fatalf("setupFrozenEngine: set: %v", err)
+	}
+
+	if err := engine.CreateNewGeneration(); err != nil {
+		t.Fatalf("setupFrozenEngine: CreateNewGeneration: %v", err)
+	}
+
+	// Write the temp SSTable that a real flushWorker would have produced.
+	tempPath := filepath.Join(dir, "000001.sst.tmp")
+	if err := sstable.WriteSSTable(engine.frozenMemTable, tempPath); err != nil {
+		t.Fatalf("setupFrozenEngine: WriteSSTable: %v", err)
+	}
+
+	return engine, tempPath
 }
