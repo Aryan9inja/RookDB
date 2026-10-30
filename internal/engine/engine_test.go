@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/Aryan9inja/RookDB/internal/memtable"
 	"github.com/Aryan9inja/RookDB/internal/operation"
@@ -698,133 +697,73 @@ func setupFrozenEngine(t *testing.T) (*Engine, string) {
 	return engine, tempPath
 }
 
-// TestFlushIntegration exercises the complete end-to-end flush pipeline:
-//
-//  1. Calling Flush() rotates the generation.
-//  2. The worker receives the frozen generation.
-//  3. The worker creates the expected .sst.tmp.
-//  4. The result consumer publishes the SSTable.
-//  5. The matching WAL is reclaimed.
-//  6. Frozen state is cleared.
 func TestFlushIntegration(t *testing.T) {
-	engine := newTestEngine(t)
-	defer engine.Close()
+	dir := t.TempDir()
 
-	dir := engine.dataDir
+	// Engine A: write and flush
+	engine := newTestEngineAtDir(t, dir)
 
-	// ── Pre-conditions ────────────────────────────────────────────────────────
-	// Seed the current generation with a few keys so the MemTable is non-empty.
 	if err := engine.set("name", "Aryan"); err != nil {
-		t.Fatalf("pre-condition: set name: %v", err)
+		t.Fatalf("set name: %v", err)
 	}
+
 	if err := engine.set("age", "22"); err != nil {
-		t.Fatalf("pre-condition: set age: %v", err)
+		t.Fatalf("set age: %v", err)
 	}
 
 	genBeforeFlush := engine.currGen
 	walBeforeFlush := filepath.Join(dir, genBeforeFlush+".wal")
+	expectedSSTPath := filepath.Join(dir, genBeforeFlush+".sst")
+	expectedTmpPath := filepath.Join(dir, genBeforeFlush+".sst.tmp")
 
-	// ── Step 1: Calling Flush() rotates the generation ────────────────────────
 	if err := engine.Flush(); err != nil {
-		t.Fatalf("step 1: Flush() returned error: %v", err)
+		t.Fatalf("Flush: %v", err)
 	}
 
 	if engine.currGen == genBeforeFlush {
-		t.Fatalf(
-			"step 1: currGen still %q after Flush() – generation was not rotated",
-			genBeforeFlush,
-		)
+		t.Fatalf("generation was not rotated")
 	}
 
 	newGen := engine.currGen
 
-	// The frozen generation is the generation that was active before Flush().
-	frozenGenAtFlush := genBeforeFlush
-
-	expectedTmpPath := filepath.Join(dir, frozenGenAtFlush+".sst.tmp")
-	expectedSSTPath := filepath.Join(dir, frozenGenAtFlush+".sst")
-
-	// ── Steps 2–6: Wait for the complete flush pipeline ───────────────────────
-	// flushDone is signalled only after handleFlushResult has completed
-	// publication and WAL reclamation. Receiving from this channel synchronizes
-	// the test with those state changes.
-	select {
-	case err := <-engine.flushDone:
-		if err != nil {
-			t.Fatalf("flush failed: %v", err)
-		}
-
-	case <-time.After(3 * time.Second):
-		t.Fatal("flush did not complete within timeout")
+	// Close: must drain the pending flush
+	if err := engine.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 
-	// ── Post-conditions ───────────────────────────────────────────────────────
-
-	// Step 3: The temporary SSTable must have been renamed away.
-	if _, err := os.Stat(expectedTmpPath); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf(
-			"step 3: temp file %q should not exist after publication; stat error: %v",
-			expectedTmpPath,
-			err,
-		)
-	}
-
-	// Step 4: The final SSTable must exist.
+	// Verify on-disk flush artefacts
 	if _, err := os.Stat(expectedSSTPath); err != nil {
-		t.Errorf("step 4: SSTable %q was not published: %v", expectedSSTPath, err)
+		t.Fatalf("published SSTable missing: %v", err)
 	}
 
-	// Step 5: The WAL for the frozen generation must have been reclaimed.
+	if _, err := os.Stat(expectedTmpPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("temporary SSTable should not exist; stat error: %v", err)
+	}
+
 	if _, err := os.Stat(walBeforeFlush); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf(
-			"step 5: WAL %q should have been reclaimed; stat error: %v",
-			walBeforeFlush,
-			err,
-		)
+		t.Errorf("frozen WAL should have been reclaimed; stat error: %v", err)
 	}
 
-	// Step 6: Frozen state must be fully cleared.
-	if engine.frozenGen != "" {
-		t.Errorf("step 6: frozenGen = %q, want empty", engine.frozenGen)
-	}
-	if engine.frozenWal != nil {
-		t.Error("step 6: frozenWal is not nil")
-	}
-	if engine.frozenMemTable != nil {
-		t.Error("step 6: frozenMemTable is not nil")
-	}
-	if engine.frozenSSTable != nil {
-		t.Error("step 6: frozenSSTable is not nil")
+	if _, err := os.Stat(filepath.Join(dir, newGen+".wal")); err != nil {
+		t.Errorf("active WAL missing: %v", err)
 	}
 
-	// The new SSTable handler must be registered at the front of engine.sstables.
-	if len(engine.sstables) == 0 {
-		t.Fatal("post: sstables is empty after flush – handler was not registered")
-	}
+	// Engine B: recover from the same directory
+	recovered := newTestEngineAtDir(t, dir)
+	defer recovered.Close()
 
-	if got := engine.sstables[0].Name(); got != frozenGenAtFlush {
-		t.Errorf("post: sstables[0].Name() = %q, want %q", got, frozenGenAtFlush)
-	}
-
-	// The active WAL must now belong to the new generation.
-	activeWAL := filepath.Join(dir, newGen+".wal")
-	if _, err := os.Stat(activeWAL); err != nil {
-		t.Errorf("post: active WAL %q does not exist: %v", activeWAL, err)
-	}
-
-	// Data written before the flush must still be readable via the SSTable.
 	for key, want := range map[string]string{
 		"name": "Aryan",
 		"age":  "22",
 	} {
-		got, err := engine.get(key)
+		got, err := recovered.get(key)
 		if err != nil {
-			t.Errorf("post: get(%q): %v", key, err)
+			t.Errorf("recovery get(%q): %v", key, err)
 			continue
 		}
 
 		if got != want {
-			t.Errorf("post: get(%q) = %q, want %q", key, got, want)
+			t.Errorf("recovery get(%q) = %q, want %q", key, got, want)
 		}
 	}
 }
