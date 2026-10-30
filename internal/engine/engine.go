@@ -35,7 +35,6 @@ type Engine struct {
 	flushJobs    chan flushJob
 	flushResults chan flushResult
 
-	stopCh    chan struct{}
 	closeOnce sync.Once
 	wg        sync.WaitGroup
 
@@ -43,8 +42,10 @@ type Engine struct {
 	closing     bool
 	activeOps   sync.WaitGroup
 
-	// For integration testing
-	flushDone chan error
+	flushErrMu sync.Mutex
+	flushErr   error
+
+	closeErr error
 }
 
 type flushJob struct {
@@ -78,8 +79,6 @@ func NewEngine(dataDir string) (*Engine, error) {
 		sstables:     handlers,
 		flushJobs:    make(chan flushJob),
 		flushResults: make(chan flushResult),
-		stopCh:       make(chan struct{}),
-		flushDone:    make(chan error, 1),
 	}
 
 	if err := engine.recover(); err != nil {
@@ -109,27 +108,43 @@ func (engine *Engine) Close() error {
 
 	engine.activeOps.Wait()
 
-	var closeErrs []error
-
 	engine.closeOnce.Do(func() {
-		close(engine.stopCh)
+		var closeErrs []error
 
+		// Stop submissions and drain the flush pipeline.
+		close(engine.flushJobs)
 		engine.wg.Wait()
 
+		// Report background flush failures.
+		if err := engine.getFlushError(); err != nil {
+			closeErrs = append(closeErrs, err)
+		}
+
+		// Close all registered SSTable handlers.
 		for _, h := range engine.sstables {
 			if err := h.Close(); err != nil {
 				closeErrs = append(closeErrs, err)
 			}
 		}
 
-		if engine.wal != nil {
-			if err := engine.wal.Close(); err != nil {
-				closeErrs = append(closeErrs, err)
+		// Close the frozen WAL, but preserve its file on disk.
+		if engine.frozenWal != nil {
+			if err := engine.frozenWal.Close(); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close frozen WAL: %w", err))
 			}
 		}
+
+		// Close the active WAL.
+		if engine.wal != nil {
+			if err := engine.wal.Close(); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close active WAL: %w", err))
+			}
+		}
+
+		engine.closeErr = errors.Join(closeErrs...)
 	})
 
-	return errors.Join(closeErrs...)
+	return engine.closeErr
 }
 
 func (engine *Engine) Flush() error {
@@ -153,59 +168,42 @@ func (engine *Engine) Flush() error {
 		memTable:   engine.frozenMemTable,
 	}
 
-	select {
-	case engine.flushJobs <- job:
-		return nil
-	case <-engine.stopCh:
-		return ErrEngineClosed
-	}
+	engine.flushJobs <- job
+	return nil
 }
 
 func (engine *Engine) flushWorker() {
 	defer engine.wg.Done()
-	for {
-		select {
-		case <-engine.stopCh:
-			return
+	defer close(engine.flushResults)
 
-		case job, ok := <-engine.flushJobs:
-			if !ok {
-				return
-			}
-			result := job.flushGeneration()
-
-			select {
-			case engine.flushResults <- *result:
-			case <-engine.stopCh:
-				return
-			}
-		}
+	for job := range engine.flushJobs {
+		result := job.flushGeneration()
+		engine.flushResults <- *result
 	}
 }
 
 func (engine *Engine) flushResConsumer() {
 	defer engine.wg.Done()
 
-	for {
-		select {
-		case <-engine.stopCh:
-			return
-
-		case res, ok := <-engine.flushResults:
-			if !ok {
-				return
-			}
-
-			if err := engine.handleFlushResult(res); err != nil {
-				// TODO: record the error so the Engine can retry
-				// or report it to the caller.
-				engine.flushDone <- err
-				continue
-			}
-
-			engine.flushDone <- nil
+	for res := range engine.flushResults {
+		if err := engine.handleFlushResult(res); err != nil {
+			engine.setFlushError(err)
 		}
 	}
+}
+
+func (engine *Engine) setFlushError(err error) {
+	engine.flushErrMu.Lock()
+	defer engine.flushErrMu.Unlock()
+
+	engine.flushErr = errors.Join(engine.flushErr, err)
+}
+
+func (engine *Engine) getFlushError() error {
+	engine.flushErrMu.Lock()
+	defer engine.flushErrMu.Unlock()
+
+	return engine.flushErr
 }
 
 func (engine *Engine) handleFlushResult(res flushResult) error {
@@ -236,8 +234,12 @@ func (engine *Engine) publishFrozenSSTable(res flushResult) error {
 		fmt.Sprintf("%s.sst", res.generation),
 	)
 
-	if err := os.Rename(res.tempPath, finalPath); err != nil {
-		return fmt.Errorf("publish SSTable: %w", err)
+	if _, err := os.Stat(finalPath); errors.Is(err, os.ErrNotExist) {
+		if err := os.Rename(res.tempPath, finalPath); err != nil {
+			return fmt.Errorf("publish SSTable: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("stat published SSTable: %w", err)
 	}
 
 	handler, err := sstable.Open(finalPath)
