@@ -42,6 +42,9 @@ type Engine struct {
 	lifecycleMu sync.Mutex
 	closing     bool
 	activeOps   sync.WaitGroup
+
+	// For integration testing
+	flushDone chan error
 }
 
 type flushJob struct {
@@ -76,6 +79,7 @@ func NewEngine(dataDir string) (*Engine, error) {
 		flushJobs:    make(chan flushJob),
 		flushResults: make(chan flushResult),
 		stopCh:       make(chan struct{}),
+		flushDone:    make(chan error, 1),
 	}
 
 	if err := engine.recover(); err != nil {
@@ -91,8 +95,9 @@ func NewEngine(dataDir string) (*Engine, error) {
 	}
 
 	// spawn go routine to flush in background
-	engine.wg.Add(1)
+	engine.wg.Add(2)
 	go engine.flushWorker()
+	go engine.flushResConsumer()
 
 	return engine, nil
 }
@@ -141,7 +146,19 @@ func (engine *Engine) Flush() error {
 		return fmt.Errorf("error flushing to storage: %w", err)
 	}
 
-	return nil
+	job := flushJob{
+		dataDir:    engine.dataDir,
+		generation: engine.frozenGen,
+		wal:        engine.frozenWal,
+		memTable:   engine.frozenMemTable,
+	}
+
+	select {
+	case engine.flushJobs <- job:
+		return nil
+	case <-engine.stopCh:
+		return ErrEngineClosed
+	}
 }
 
 func (engine *Engine) flushWorker() {
@@ -182,8 +199,11 @@ func (engine *Engine) flushResConsumer() {
 			if err := engine.handleFlushResult(res); err != nil {
 				// TODO: record the error so the Engine can retry
 				// or report it to the caller.
+				engine.flushDone <- err
 				continue
 			}
+
+			engine.flushDone <- nil
 		}
 	}
 }
