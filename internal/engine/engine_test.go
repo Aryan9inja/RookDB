@@ -642,61 +642,6 @@ func TestHandleFlushResult(t *testing.T) {
 	})
 }
 
-func newTestEngine(t *testing.T) *Engine {
-	t.Helper()
-
-	dir := t.TempDir()
-
-	engine, err := NewEngine(dir)
-	if err != nil {
-		t.Fatalf("setup Engine: %v", err)
-	}
-
-	return engine
-}
-
-func newTestEngineAtDir(t *testing.T, path string) *Engine {
-	t.Helper()
-
-	engine, err := NewEngine(path)
-	if err != nil {
-		t.Fatalf("setup Engine: %v", err)
-	}
-
-	return engine
-}
-
-// setupFrozenEngine creates an engine that already has a frozen generation
-// ready for handleFlushResult. It returns the engine with:
-//   - frozenGen  = "000001"
-//   - frozenWal  / frozenMemTable populated
-//   - a valid temp SSTable written at <dir>/000001.sst.tmp
-func setupFrozenEngine(t *testing.T) (*Engine, string) {
-	t.Helper()
-
-	dir := t.TempDir()
-	engine, err := NewEngine(dir)
-	if err != nil {
-		t.Fatalf("setupFrozenEngine: NewEngine: %v", err)
-	}
-
-	if err := engine.set("key", "value"); err != nil {
-		t.Fatalf("setupFrozenEngine: set: %v", err)
-	}
-
-	if err := engine.CreateNewGeneration(); err != nil {
-		t.Fatalf("setupFrozenEngine: CreateNewGeneration: %v", err)
-	}
-
-	// Write the temp SSTable that a real flushWorker would have produced.
-	tempPath := filepath.Join(dir, "000001.sst.tmp")
-	if err := sstable.WriteSSTable(engine.frozenMemTable, tempPath); err != nil {
-		t.Fatalf("setupFrozenEngine: WriteSSTable: %v", err)
-	}
-
-	return engine, tempPath
-}
-
 func TestFlushIntegration(t *testing.T) {
 	dir := t.TempDir()
 
@@ -766,4 +711,111 @@ func TestFlushIntegration(t *testing.T) {
 			t.Errorf("recovery get(%q) = %q, want %q", key, got, want)
 		}
 	}
+}
+
+func TestClosePreservesWALOnFlushFailure(t *testing.T) {
+	dir := t.TempDir()
+
+	engine := newTestEngineAtDir(t, dir)
+
+	if err := engine.set("name", "Aryan"); err != nil {
+		t.Fatalf("set name: %v", err)
+	}
+
+	frozenGen := engine.currGen
+	frozenWAL := filepath.Join(dir, frozenGen+".wal")
+	activeWAL := filepath.Join(dir, "000002.wal")
+
+	// Force SSTable creation to fail: the expected output path is a directory.
+	tempPath := filepath.Join(dir, frozenGen+".sst.tmp")
+	if err := os.Mkdir(tempPath, 0755); err != nil {
+		t.Fatalf("create blocking directory: %v", err)
+	}
+
+	if err := engine.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	// Close must drain the failed job and report its error.
+	if err := engine.Close(); err == nil {
+		t.Fatal("expected Close to report flush failure, got nil")
+	}
+
+	// The frozen WAL must remain available for recovery.
+	if _, err := os.Stat(frozenWAL); err != nil {
+		t.Errorf("frozen WAL should remain: %v", err)
+	}
+
+	// The active WAL must also remain on disk.
+	if _, err := os.Stat(activeWAL); err != nil {
+		t.Errorf("active WAL should remain: %v", err)
+	}
+
+	// Recover using a fresh Engine.
+	recovered := newTestEngineAtDir(t, dir)
+	defer recovered.Close()
+
+	got, err := recovered.get("name")
+	if err != nil {
+		t.Fatalf("recovery get: %v", err)
+	}
+
+	if got != "Aryan" {
+		t.Fatalf("recovered value = %q, want %q", got, "Aryan")
+	}
+}
+
+func newTestEngine(t *testing.T) *Engine {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	engine, err := NewEngine(dir)
+	if err != nil {
+		t.Fatalf("setup Engine: %v", err)
+	}
+
+	return engine
+}
+
+func newTestEngineAtDir(t *testing.T, path string) *Engine {
+	t.Helper()
+
+	engine, err := NewEngine(path)
+	if err != nil {
+		t.Fatalf("setup Engine: %v", err)
+	}
+
+	return engine
+}
+
+// setupFrozenEngine creates an engine that already has a frozen generation
+// ready for handleFlushResult. It returns the engine with:
+//   - frozenGen  = "000001"
+//   - frozenWal  / frozenMemTable populated
+//   - a valid temp SSTable written at <dir>/000001.sst.tmp
+func setupFrozenEngine(t *testing.T) (*Engine, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	engine, err := NewEngine(dir)
+	if err != nil {
+		t.Fatalf("setupFrozenEngine: NewEngine: %v", err)
+	}
+
+	if err := engine.set("key", "value"); err != nil {
+		t.Fatalf("setupFrozenEngine: set: %v", err)
+	}
+
+	if err := engine.CreateNewGeneration(); err != nil {
+		t.Fatalf("setupFrozenEngine: CreateNewGeneration: %v", err)
+	}
+
+	// Write the temp SSTable that a real flushWorker would have produced.
+	tempPath := filepath.Join(dir, "000001.sst.tmp")
+	if err := sstable.WriteSSTable(engine.frozenMemTable, tempPath); err != nil {
+		t.Fatalf("setupFrozenEngine: WriteSSTable: %v", err)
+	}
+
+	return engine, tempPath
 }
