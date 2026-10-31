@@ -12,7 +12,7 @@ type SSTableReader struct {
 	foot *footer
 }
 
-const maxExpectedBlockSize = 10240 // 10 KB
+const maxExpectedBlockSize = 1 * 1024 * 1024 // 1 MiB
 
 func newSSTableReader(path string) (*SSTableReader, error) {
 	fd, err := os.Open(path)
