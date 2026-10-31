@@ -153,6 +153,10 @@ func (engine *Engine) Flush() error {
 	}
 	defer engine.endOperation()
 
+	return engine.flush()
+}
+
+func (engine* Engine) flush() error{
 	err := engine.CreateNewGeneration()
 	if errors.Is(err, ErrCannotRotateGen) {
 		return nil
@@ -464,8 +468,22 @@ func (engine *Engine) applyOperation(op operation.Operation) {
 	}
 
 	if engine.memTable.NeedFlush() {
-
+		if err := engine.maybeFlush(); err!=nil{
+			engine.setFlushError(err)
+		}
 	}
+}
+
+func (engine *Engine) maybeFlush() error {
+	err := engine.flush()
+
+	if errors.Is(err, ErrCannotRotateGen) {
+		// A frozen generation is already being flushed.
+		// Defer rotation until a later successful mutation.
+		return nil
+	}
+
+	return err
 }
 
 func (engine *Engine) recover() error {
