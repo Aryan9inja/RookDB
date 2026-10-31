@@ -2,9 +2,12 @@ package engine
 
 import (
 	"errors"
+	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Aryan9inja/RookDB/internal/memtable"
@@ -762,6 +765,52 @@ func TestClosePreservesWALOnFlushFailure(t *testing.T) {
 
 	if got != "Aryan" {
 		t.Fatalf("recovered value = %q, want %q", got, "Aryan")
+	}
+}
+
+func TestAutomaticFlushIntegration(t *testing.T) {
+	dir := t.TempDir()
+	engine := newTestEngineAtDir(t, dir)
+
+	initialGen := engine.currGen
+
+	// FOR CREATING DATA MORE THAN 80MiB
+	// WHICH IS THE THRESHOLD LIMIT
+	const (
+		valueSize = 1024
+		key_count = 80_000
+	)
+
+	value := strings.Repeat("x", valueSize)
+
+	for i := range key_count {
+		key := fmt.Sprintf("key-%08d", i)
+
+		if _, err := engine.Execute("SET", key, value); err != nil {
+			t.Fatalf("SET %s: %v", key, err)
+		}
+	}
+
+	if engine.currGen == initialGen {
+		t.Fatal("automatic flush did not rotate generation")
+	}
+
+	if err := engine.Close(); err != nil {
+		t.Fatalf("error closing the engine: %v", err)
+	}
+
+	recoveredEngine := newTestEngineAtDir(t, dir)
+
+	// checking some random key values
+	for i := 0; i < key_count; i += (rand.Intn(1000) + 1) {
+		key := fmt.Sprintf("key-%08d", i)
+
+		if _, err := recoveredEngine.Execute("GET", key, ""); err != nil {
+			if errors.Is(err, ErrKeyNotFound) {
+				t.Fatalf("key not found: %v", key)
+			}
+			t.Fatalf("error while get: %v", err)
+		}
 	}
 }
 
