@@ -14,7 +14,7 @@ import (
 	"github.com/Aryan9inja/RookDB/internal/operation"
 )
 
-const MaxRecordSize = 512
+const MaxRecordSize = 4 * 1024
 
 // WAL manages the open WAL file.
 type WAL struct {
