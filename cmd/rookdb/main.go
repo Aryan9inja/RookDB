@@ -51,7 +51,7 @@ func main() {
 
 	dataDir := os.Args[1]
 
-	databaseEngine, err := engine.NewEngine(filepath.Join(dataDir, "rookdb.wal"))
+	databaseEngine, err := engine.NewEngine(dataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Database engine initialization failed with error: %v\n", err)
 		os.Exit(1)
