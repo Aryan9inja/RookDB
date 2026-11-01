@@ -156,7 +156,7 @@ func (engine *Engine) Flush() error {
 	return engine.flush()
 }
 
-func (engine* Engine) flush() error{
+func (engine *Engine) flush() error {
 	err := engine.CreateNewGeneration()
 	if errors.Is(err, ErrCannotRotateGen) {
 		return nil
@@ -468,7 +468,7 @@ func (engine *Engine) applyOperation(op operation.Operation) {
 	}
 
 	if engine.memTable.NeedFlush() {
-		if err := engine.maybeFlush(); err!=nil{
+		if err := engine.maybeFlush(); err != nil {
 			engine.setFlushError(err)
 		}
 	}

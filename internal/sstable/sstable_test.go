@@ -13,11 +13,11 @@ func TestDiscover(t *testing.T) {
 
 	os.Create(filePath)
 
-	h, _:=Discover(dir)
-	if len(h) != 1{
+	h, _ := Discover(dir)
+	if len(h) != 1 {
 		t.Fatalf("fuck man")
 	}
-	if h[0].Name() != "000001"{
+	if h[0].Name() != "000001" {
 		t.Fatalf("fuck again")
 	}
 }
