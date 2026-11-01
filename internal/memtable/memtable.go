@@ -76,6 +76,7 @@ func randomHeight() int {
 	return height
 }
 
+// Initialize a new memtable
 func NewMemTable() *MemTable {
 	// head size in skip list
 	sentinelOverhead := int64(skipListNodeOverhead + 8*maxSkipListHeight)
@@ -86,34 +87,48 @@ func NewMemTable() *MemTable {
 	}
 }
 
+// Checks if memtable needs to flush.
+// Determined by memtable internal threshold limit
 func (mTable *MemTable) NeedFlush() bool {
 	return mTable.approxSize >= MemTableFlushThreshold
 }
 
+// Create a new key value pair in memtable.
 func (mTable *MemTable) Put(key, value string) {
 	sizeDelta := mTable.list.putNode(SetEntry, key, value)
 	mTable.approxSize += sizeDelta
 }
 
+// Retrieves a key's value from memtable.
 func (mTable *MemTable) Get(key string) (string, entryType, bool) {
 	return mTable.list.getNode(key)
 }
 
+// Marks a key as deleted in memtable.
+// Does not remove the key.
+// Creates a new entry marked as deleted.
 func (mTable *MemTable) Delete(key string) {
 	sizeDelta := mTable.list.putNode(DeleteEntry, key, "")
 	mTable.approxSize += sizeDelta
 }
 
+// Retrives the number of entries in memtable's
+// internal data structure
 func (mTable *MemTable) EntryCount() uint64 {
 	return mTable.list.entryCount
 }
 
+// Provides an iterator to iterate over
+// memtable data structure sequentially
 func (m *MemTable) Iterator() *iterator {
 	return &iterator{
 		current: m.list.head,
 	}
 }
 
+// Moves to the next sequential entry
+// using the memtable iterator.
+// Return false if all entries are exhausted.
 func (it *iterator) Next() bool {
 	if it.current == nil || it.current.next[0] == nil {
 		it.current = nil
@@ -125,16 +140,21 @@ func (it *iterator) Next() bool {
 	return true
 }
 
-// will panic if Iterator.Next() returned false
+// Retrives key at current iterator position.
+// Will panic if Iterator.Next() returned false
 func (it *iterator) Key() string {
 	return it.current.listEntry.key
 }
 
-// will panic if Iterator.Next() returned false
+// Retrives value at current iterator position.
+// Will panic if Iterator.Next() returned false
 func (it *iterator) Value() string {
 	return it.current.listEntry.value
 }
 
+// Retrives type of entry (set or delete) at
+// current iterator position.
+// Will panic if Iterator.Next() returned false
 func (it *iterator) Type() entryType {
 	return it.current.listEntry.eType
 }
