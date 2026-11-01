@@ -14,7 +14,7 @@ import (
 	"github.com/Aryan9inja/RookDB/internal/operation"
 )
 
-const MaxRecordSize = 512
+const MaxRecordSize = 4 * 1024
 
 // WAL manages the open WAL file.
 type WAL struct {
@@ -51,7 +51,6 @@ func NewWAL(path string) (*WAL, error) {
 	}
 
 	return &WAL{file: fd, currentRecordOffset: nil}, nil
-	// TODO : After WAL lifecycle is clear, we need a close call on fd
 }
 
 // The caller is responsible for closing the WAL.

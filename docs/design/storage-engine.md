@@ -26,6 +26,60 @@ If append fails, in-memory state is not updated. A successful append means the W
 
 `SET` requires a non-empty key and value. `DELETE` requires a non-empty key and no value; deleting an absent key succeeds as a no-op. `GET` returns `ErrKeyNotFound` when the key is absent.
 
+## Storage generations
+The engine organizes active writes into generations. A generation consists of a WAL and the MemTable populated from that WAL.
+
+At normal runtime there is:
+- one current generation accepting writes;
+- at most one frozen generation being flushed;
+- zero or more immutable SSTables representing completed generations.
+
+The lifecycle is:
+```text
+Current generation
+    WAL + MemTable
+         │
+         │ MemTable reaches flush threshold
+         ▼
+Frozen generation
+    WAL + MemTable
+         │
+         │ flush
+         ▼
+Immutable SSTable
+         │
+         │ publish successfully
+         ▼
+WAL may be reclaimed
+````
+
+A frozen generation is not replaced by another frozen generation while its flush is in progress. If the current MemTable reaches its threshold while a frozen generation is still being flushed, the engine waits for that flush to complete before creating another frozen generation.
+
+## SSTable ownership
+The storage engine owns the lifecycle and collection of SSTables, while the SSTable package owns the format and mechanics of reading and writing an individual SSTable.
+
+The engine searches SSTables from newest to oldest. The first SSTable containing an entry determines the result, including tombstones.
+
+## Flush durability boundary
+A frozen generation may be considered persisted only after its SSTable has been completely written and synchronized.
+
+SSTables are written to a temporary path and published only after successful synchronization:
+```text
+Frozen MemTable
+      ↓
+write temporary SSTable
+      ↓
+write blocks, index, Bloom filter, footer
+      ↓
+sync
+      ↓
+publish SSTable
+      ↓
+reclaim generation WAL
+````
+
+The WAL must remain available until the corresponding SSTable has been successfully published. This ensures that a crash during an SSTable flush does not leave the database without either the WAL history or a valid SSTable.
+
 ## Recovery boundary
 
 The engine requests operations from the WAL one at a time, validates and applies each before requesting the next. If a structurally valid operation is unsupported or semantically invalid, recovery stops and truncates that current record through the WAL API. Recovery does not skip an operation and continue with later history.

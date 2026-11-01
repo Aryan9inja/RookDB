@@ -18,7 +18,7 @@ func TestIterator(t *testing.T) {
 
 	t.Run("single element", func(t *testing.T) {
 		memT := MemTable{list: newSkipList()}
-		memT.list.putNode(setEntry, "name", "aryan")
+		memT.list.putNode(SetEntry, "name", "aryan")
 
 		it := memT.Iterator()
 
@@ -29,8 +29,8 @@ func TestIterator(t *testing.T) {
 		key := it.Key()
 		value := it.Value()
 		eType := it.Type()
-		if key != "name" || value != "aryan" || eType != setEntry {
-			t.Fatalf("expected key-value-type to be name-aryan-setEntry, got %v-%v-%v", key, value, eType)
+		if key != "name" || value != "aryan" || eType != SetEntry {
+			t.Fatalf("expected key-value-type to be name-aryan-SetEntry, got %v-%v-%v", key, value, eType)
 		}
 
 		if it.Next() {
@@ -40,17 +40,17 @@ func TestIterator(t *testing.T) {
 
 	t.Run("multiple elements in sorted order", func(t *testing.T) {
 		memT := MemTable{list: newSkipList()}
-		memT.list.putNode(setEntry, "pet", "3")
-		memT.list.putNode(deleteEntry, "bat", "")
-		memT.list.putNode(setEntry, "cat", "2")
+		memT.list.putNode(SetEntry, "pet", "3")
+		memT.list.putNode(DeleteEntry, "bat", "")
+		memT.list.putNode(SetEntry, "cat", "2")
 
 		expected := []struct {
 			key, value string
 			eType      entryType
 		}{
-			{"bat", "", deleteEntry},
-			{"cat", "2", setEntry},
-			{"pet", "3", setEntry},
+			{"bat", "", DeleteEntry},
+			{"cat", "2", SetEntry},
+			{"pet", "3", SetEntry},
 		}
 		it := memT.Iterator()
 		for _, item := range expected {
@@ -71,8 +71,8 @@ func TestIterator(t *testing.T) {
 
 	t.Run("exhaustion", func(t *testing.T) {
 		memT := MemTable{list: newSkipList()}
-		memT.list.putNode(setEntry, "bat", "1")
-		memT.list.putNode(setEntry, "cat", "2")
+		memT.list.putNode(SetEntry, "bat", "1")
+		memT.list.putNode(SetEntry, "cat", "2")
 
 		it := memT.Iterator()
 		if !it.Next() {
@@ -88,7 +88,7 @@ func TestIterator(t *testing.T) {
 
 	t.Run("repeated Next() after exhaustion", func(t *testing.T) {
 		memT := MemTable{list: newSkipList()}
-		memT.list.putNode(setEntry, "name", "aryan")
+		memT.list.putNode(SetEntry, "name", "aryan")
 
 		it := memT.Iterator()
 		if !it.Next() {
@@ -125,9 +125,9 @@ func nodesEqual(a, b *skipListNode) bool {
 
 func TestSearchList(t *testing.T) {
 	// Skip list nodes
-	bat := newTestNode(t, setEntry, "bat", "xyz", 1)
-	cat := newTestNode(t, setEntry, "cat", "xyz", 3)
-	pet := newTestNode(t, setEntry, "pet", "xyz", 2)
+	bat := newTestNode(t, SetEntry, "bat", "xyz", 1)
+	cat := newTestNode(t, SetEntry, "cat", "xyz", 3)
+	pet := newTestNode(t, SetEntry, "pet", "xyz", 2)
 
 	// Generate skip list structure
 	list := newSkipList()
@@ -215,9 +215,9 @@ func TestSearchList(t *testing.T) {
 }
 
 func TestGetValue(t *testing.T) {
-	bat := newTestNode(t, setEntry, "bat", "abc", 1)
-	cat := newTestNode(t, setEntry, "cat", "xyz", 3)
-	pet := newTestNode(t, setEntry, "pet", "ijk", 2)
+	bat := newTestNode(t, SetEntry, "bat", "abc", 1)
+	cat := newTestNode(t, SetEntry, "cat", "xyz", 3)
+	pet := newTestNode(t, SetEntry, "pet", "ijk", 2)
 
 	// Generate skip list structure
 	list := newSkipList()
@@ -234,8 +234,8 @@ func TestGetValue(t *testing.T) {
 		expected := "abc"
 		got, gotType, ok := list.getNode("bat")
 
-		if got != expected || gotType != setEntry || !ok {
-			t.Fatalf("expected %v, type %v, and true; got %v, type %v, and %v", expected, setEntry, got, gotType, ok)
+		if got != expected || gotType != SetEntry || !ok {
+			t.Fatalf("expected %v, type %v, and true; got %v, type %v, and %v", expected, SetEntry, got, gotType, ok)
 		}
 	})
 
@@ -278,11 +278,11 @@ func TestGetValue(t *testing.T) {
 
 	t.Run("deleted key returns delete entry type", func(t *testing.T) {
 		list := newSkipList()
-		list.putNode(deleteEntry, "bat", "")
+		list.putNode(DeleteEntry, "bat", "")
 
 		got, gotType, ok := list.getNode("bat")
-		if got != "" || gotType != deleteEntry || !ok {
-			t.Fatalf("expected empty value, type %v, and true; got %q, type %v, and %v", deleteEntry, got, gotType, ok)
+		if got != "" || gotType != DeleteEntry || !ok {
+			t.Fatalf("expected empty value, type %v, and true; got %q, type %v, and %v", DeleteEntry, got, gotType, ok)
 		}
 	})
 }
@@ -291,7 +291,7 @@ func TestPutNode(t *testing.T) {
 	t.Run("insert to empty list, SET", func(t *testing.T) {
 		emptyList := newSkipList()
 
-		delta := emptyList.putNode(setEntry, "name", "aryan")
+		delta := emptyList.putNode(SetEntry, "name", "aryan")
 
 		expected := "aryan"
 		got, _, ok := emptyList.getNode("name")
@@ -307,7 +307,7 @@ func TestPutNode(t *testing.T) {
 	t.Run("insert to empty list, SET", func(t *testing.T) {
 		emptyList := newSkipList()
 
-		delta := emptyList.putNode(deleteEntry, "name", "aryan")
+		delta := emptyList.putNode(DeleteEntry, "name", "aryan")
 
 		expected := "aryan"
 		got, _, ok := emptyList.getNode("name")
@@ -322,10 +322,10 @@ func TestPutNode(t *testing.T) {
 
 	t.Run("insert before existing keys", func(t *testing.T) {
 		list := newSkipList()
-		list.putNode(setEntry, "bat", "abc")
-		list.putNode(setEntry, "cat", "xyz")
+		list.putNode(SetEntry, "bat", "abc")
+		list.putNode(SetEntry, "cat", "xyz")
 
-		list.putNode(setEntry, "ant", "first")
+		list.putNode(SetEntry, "ant", "first")
 
 		expected := "first"
 		got, _, ok := list.getNode("ant")
@@ -339,10 +339,10 @@ func TestPutNode(t *testing.T) {
 
 	t.Run("insert between keys", func(t *testing.T) {
 		list := newSkipList()
-		list.putNode(setEntry, "bat", "abc")
-		list.putNode(setEntry, "pet", "ijk")
+		list.putNode(SetEntry, "bat", "abc")
+		list.putNode(SetEntry, "pet", "ijk")
 
-		list.putNode(setEntry, "cat", "middle")
+		list.putNode(SetEntry, "cat", "middle")
 
 		expected := "middle"
 		got, _, ok := list.getNode("cat")
@@ -366,10 +366,10 @@ func TestPutNode(t *testing.T) {
 
 	t.Run("insert after existing keys", func(t *testing.T) {
 		list := newSkipList()
-		list.putNode(setEntry, "bat", "abc")
-		list.putNode(setEntry, "cat", "xyz")
+		list.putNode(SetEntry, "bat", "abc")
+		list.putNode(SetEntry, "cat", "xyz")
 
-		list.putNode(setEntry, "zoo", "last")
+		list.putNode(SetEntry, "zoo", "last")
 
 		expected := "last"
 		got, _, ok := list.getNode("zoo")
@@ -388,10 +388,10 @@ func TestPutNode(t *testing.T) {
 
 	t.Run("update existing key, SET -> SET", func(t *testing.T) {
 		list := newSkipList()
-		list.putNode(setEntry, "cat", "old")
+		list.putNode(SetEntry, "cat", "old")
 
 		original := list.head.next[0]
-		delta := list.putNode(setEntry, "cat", "newVal")
+		delta := list.putNode(SetEntry, "cat", "newVal")
 
 		expected := "newVal"
 		got, _, ok := list.getNode("cat")
@@ -409,10 +409,10 @@ func TestPutNode(t *testing.T) {
 
 	t.Run("update existing key, SET -> DELETE", func(t *testing.T) {
 		list := newSkipList()
-		list.putNode(setEntry, "cat", "old")
+		list.putNode(SetEntry, "cat", "old")
 
 		original := list.head.next[0]
-		delta := list.putNode(deleteEntry, "cat", "")
+		delta := list.putNode(DeleteEntry, "cat", "")
 
 		expected := ""
 		got, _, ok := list.getNode("cat")
@@ -430,10 +430,10 @@ func TestPutNode(t *testing.T) {
 
 	t.Run("update existing key, DELETE -> SET", func(t *testing.T) {
 		list := newSkipList()
-		list.putNode(deleteEntry, "cat", "")
+		list.putNode(DeleteEntry, "cat", "")
 
 		original := list.head.next[0]
-		delta := list.putNode(setEntry, "cat", "new")
+		delta := list.putNode(SetEntry, "cat", "new")
 
 		expected := "new"
 		got, _, ok := list.getNode("cat")
@@ -451,10 +451,10 @@ func TestPutNode(t *testing.T) {
 
 	t.Run("update existing key, DELETE - DELETE", func(t *testing.T) {
 		list := newSkipList()
-		list.putNode(deleteEntry, "cat", "")
+		list.putNode(DeleteEntry, "cat", "")
 
 		original := list.head.next[0]
-		delta := list.putNode(deleteEntry, "cat", "")
+		delta := list.putNode(DeleteEntry, "cat", "")
 
 		expected := ""
 		got, _, ok := list.getNode("cat")
@@ -472,9 +472,9 @@ func TestPutNode(t *testing.T) {
 
 	t.Run("node with height greater than one is linked at every level", func(t *testing.T) {
 		list := newSkipList()
-		list.putNodeWithHeight(setEntry, "bat", "first", 2)
-		list.putNodeWithHeight(setEntry, "cat", "middle", 4)
-		list.putNodeWithHeight(setEntry, "pet", "last", 1)
+		list.putNodeWithHeight(SetEntry, "bat", "first", 2)
+		list.putNodeWithHeight(SetEntry, "cat", "middle", 4)
+		list.putNodeWithHeight(SetEntry, "pet", "last", 1)
 
 		cat := list.head.next[0].next[0]
 		if cat.listEntry.key != "cat" {
@@ -509,7 +509,7 @@ func TestPutNode(t *testing.T) {
 			{"cat", "updated"},
 		}
 		for _, item := range inserts {
-			list.putNode(setEntry, item.key, item.value)
+			list.putNode(SetEntry, item.key, item.value)
 		}
 
 		var keys []string

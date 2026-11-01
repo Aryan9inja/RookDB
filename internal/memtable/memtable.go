@@ -52,8 +52,8 @@ type entry struct {
 type entryType uint8
 
 const (
-	setEntry    entryType = 0x01
-	deleteEntry entryType = 0x02
+	SetEntry    entryType = 0x01
+	DeleteEntry entryType = 0x02
 )
 
 func newSkipList() *skipList {
@@ -76,6 +76,7 @@ func randomHeight() int {
 	return height
 }
 
+// Initialize a new memtable
 func NewMemTable() *MemTable {
 	// head size in skip list
 	sentinelOverhead := int64(skipListNodeOverhead + 8*maxSkipListHeight)
@@ -86,30 +87,48 @@ func NewMemTable() *MemTable {
 	}
 }
 
+// Checks if memtable needs to flush.
+// Determined by memtable internal threshold limit
+func (mTable *MemTable) NeedFlush() bool {
+	return mTable.approxSize >= MemTableFlushThreshold
+}
+
+// Create a new key value pair in memtable.
 func (mTable *MemTable) Put(key, value string) {
-	sizeDelta := mTable.list.putNode(setEntry, key, value)
+	sizeDelta := mTable.list.putNode(SetEntry, key, value)
 	mTable.approxSize += sizeDelta
 }
 
+// Retrieves a key's value from memtable.
 func (mTable *MemTable) Get(key string) (string, entryType, bool) {
 	return mTable.list.getNode(key)
 }
 
+// Marks a key as deleted in memtable.
+// Does not remove the key.
+// Creates a new entry marked as deleted.
 func (mTable *MemTable) Delete(key string) {
-	sizeDelta := mTable.list.putNode(deleteEntry, key, "")
+	sizeDelta := mTable.list.putNode(DeleteEntry, key, "")
 	mTable.approxSize += sizeDelta
 }
 
+// Retrives the number of entries in memtable's
+// internal data structure
 func (mTable *MemTable) EntryCount() uint64 {
 	return mTable.list.entryCount
 }
 
+// Provides an iterator to iterate over
+// memtable data structure sequentially
 func (m *MemTable) Iterator() *iterator {
 	return &iterator{
 		current: m.list.head,
 	}
 }
 
+// Moves to the next sequential entry
+// using the memtable iterator.
+// Return false if all entries are exhausted.
 func (it *iterator) Next() bool {
 	if it.current == nil || it.current.next[0] == nil {
 		it.current = nil
@@ -121,16 +140,21 @@ func (it *iterator) Next() bool {
 	return true
 }
 
-// will panic if Iterator.Next() returned false
+// Retrives key at current iterator position.
+// Will panic if Iterator.Next() returned false
 func (it *iterator) Key() string {
 	return it.current.listEntry.key
 }
 
-// will panic if Iterator.Next() returned false
+// Retrives value at current iterator position.
+// Will panic if Iterator.Next() returned false
 func (it *iterator) Value() string {
 	return it.current.listEntry.value
 }
 
+// Retrives type of entry (set or delete) at
+// current iterator position.
+// Will panic if Iterator.Next() returned false
 func (it *iterator) Type() entryType {
 	return it.current.listEntry.eType
 }
@@ -177,17 +201,17 @@ func (list *skipList) putNodeWithHeight(t entryType, k, v string, height int) (s
 		old := candidate.listEntry
 
 		// SET -> DELETE && DELETE -> DELETE
-		if t == deleteEntry {
-			if old.eType == setEntry {
+		if t == DeleteEntry {
+			if old.eType == SetEntry {
 				sizeDelta = -int64(len(old.value))
 				old.value = ""
-				old.eType = deleteEntry
+				old.eType = DeleteEntry
 			}
 			return
 		}
 
 		// SET -> SET
-		if old.eType == setEntry {
+		if old.eType == SetEntry {
 			sizeDelta = int64(len(v) - len(old.value))
 			old.value = v
 			return
@@ -196,7 +220,7 @@ func (list *skipList) putNodeWithHeight(t entryType, k, v string, height int) (s
 		// DELETE → SET
 		sizeDelta = int64(len(v))
 		old.value = v
-		old.eType = setEntry
+		old.eType = SetEntry
 		return
 	}
 
