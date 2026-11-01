@@ -7,14 +7,15 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/Aryan9inja/RookDB/internal/engine"
 	"github.com/Aryan9inja/RookDB/internal/parser"
 )
 
-const version = "1.0.0"
+const version = "2.0.0"
 
-const helpText = `RookDB v1.0.0
+const helpText = `RookDB v2.0.0
 
 Usage:
   rookdb <data-directory>
@@ -65,6 +66,16 @@ func main() {
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				// ctrl + D pressed
+				fmt.Fprint(os.Stdout, "BYE")
+				fmt.Fprint(os.Stdout, "\nEXITING")
+				time.Sleep(200 * time.Millisecond)
+				fmt.Fprint(os.Stdout, ".")
+				time.Sleep(200 * time.Millisecond)
+				fmt.Fprint(os.Stdout, ".")
+				time.Sleep(200 * time.Millisecond)
+				fmt.Fprint(os.Stdout, ".\n")
+				time.Sleep(500 * time.Millisecond)
+				fmt.Fprint(os.Stdout, "OK BYE\n")
 				break
 			}
 
