@@ -23,44 +23,54 @@ RookDB is built around a few principles:
 
 ## Current Status
 
-### RookDB v1.0 — Complete
+### RookDB v2.0 — Complete
 
-The first version of RookDB provides a persistent key-value database with:
+This version of RookDB intoduces:
 
-- Interactive command-line interface
-- `SET`, `GET`, and `DELETE` operations
-- In-memory materialized state
-- Write-Ahead Log (WAL)
-- Durable WAL writes using filesystem synchronization
-- Length-prefixed WAL records
-- CRC32 integrity checks
-- WAL recovery after restart
-- Detection of incomplete/corrupted WAL records
-- Automatic truncation of invalid WAL tails
-- Operation validation during recovery
-- Persistent database data directory
-- Clean database shutdown
-- Unit tests covering normal operation and WAL corruption cases
+- Skip-list-based in-memory MemTable
+- Immutable, sorted String Table (SSTable) storage
+- SSTable data blocks with CRC32 integrity checks
+- Sparse indexing for efficient SSTable lookups
+- Bloom filters to reduce unnecessary disk reads
+- Tombstone-based deletion handling
+- Active and frozen generation management
+- Automatic MemTable flushing to SSTables
+- Atomic SSTable publication through temporary files and rename
+- WAL reclamation after successful SSTable publication
+- Recovery across multiple WAL generations and SSTables
+- Background flush worker and result handling
+- Graceful shutdown with pending flush processing
+- Flush failure handling that preserves WAL data for recovery
+- Unit and integration tests covering storage, recovery, flushing, and failure scenarios
 
-The v1 storage model is intentionally simple:
+The v2 storage model:
 
 ```text
-Client Command
-      │
-      ▼
-   Parser
-      │
-      ▼
-   Engine
-    ┌─┴─┐
-    ▼   ▼
-  WAL  Map
-   │    │
-   ▼    ▼
-Disk  Current State
+    Client Command
+          │
+          ▼
+        Parser
+          │
+          ▼
+        Engine
+    ┌──────┴──────┐
+    │             │
+  WRITE           READ
+    │             │
+    ▼            ▼
+   WAL         MemTable
+    │             │
+    ▼             │
+   Disk           │
+    │             │
+    ▼            ▼
+  MemTable ◄── SSTables
+    │             │
+    ▼            ▼
+Current State   Persistent State
 ```
 
-The WAL acts as the durable history of mutations, while the in-memory map represents the current materialized state.
+The SSTable acts as the persistent state of entries, while the memtable represents the current state.
 
 ---
 
@@ -81,7 +91,7 @@ RookDB will evolve incrementally from a simple persistent key-value store into a
 
 - [x] Memtable
 - [x] SSTables
-- [ ] Immutable memtables
+- [x] Immutable memtables
 - [x] Flush pipeline
 - [ ] Compaction
 - [x] Bloom filters
@@ -136,14 +146,17 @@ RookDB expects a **data directory** rather than a direct WAL path:
 
 RookDB manages its internal storage files inside that directory.
 
-For v1, the layout is:
+For v2, the layout is:
 
 ```text
 data/
-└── rookdb.wal
+└── 000004.wal - Current generation
+└── 000003.sst
+└── 000002.sst
+└── 000001.sst
 ```
 
-This keeps the database's storage layout separate from the executable and leaves room for future storage components such as SSTables and snapshots.
+The `.wal` file is there for persistent in memory state while `.sst` files are on disk key value storage of older data.
 
 ### Commands
 
@@ -186,7 +199,7 @@ Press `Ctrl+D` to exit the interactive shell.
 
 ## Architecture
 
-RookDB v1.0 is deliberately small and is divided into a few focused components.
+RookDB v2.0 is built around a few focused components that work together to provide durable storage using a WAL, an in-memory MemTable, and immutable SSTables.
 
 ```text
                  ┌──────────────┐
@@ -206,17 +219,25 @@ RookDB v1.0 is deliberately small and is divided into a few focused components.
                  ┌──────┴───────┐
                  ▼              ▼
           ┌────────────┐  ┌────────────┐
-          │    WAL     │  │  In-Memory │
-          │            │  │    Map     │
-          └─────┬──────┘  └────────────┘
-                │
-                ▼
-             Disk
+          │    WAL     │  │  MemTable  │
+          └─────┬──────┘  └─────┬──────┘
+                │               │
+                ▼               ▼
+              Disk          Background
+                              Flush
+                                │
+                                ▼
+                         ┌────────────┐
+                         │  SSTables  │
+                         └─────┬──────┘
+                               │
+                               ▼
+                              Disk
 ```
 
 ### Parser
 
-The parser is responsible for reading newline-delimited commands from the client and converting them into:
+The parser reads newline-delimited commands from the client and converts them into:
 
 ```text
 command
@@ -224,11 +245,11 @@ key
 value
 ```
 
-It handles command tokenization and command canonicalization, but does not know anything about the storage engine.
+It handles command tokenization and command canonicalization without knowing anything about the storage engine.
 
 ### Engine
 
-The storage engine owns the current database state and coordinates reads and writes.
+The storage engine coordinates reads, writes, generation management, and background flushing.
 
 Mutating operations follow:
 
@@ -242,21 +263,21 @@ SET / DELETE
      Sync WAL
      │
      ▼
- Update in-memory state
+ Update MemTable
      │
      ▼
  Return success
 ```
 
-This ordering ensures that an acknowledged mutation has corresponding durable WAL information that can be replayed after a crash.
+When the MemTable reaches its flush threshold, it is frozen and asynchronously written to an SSTable. New writes continue in a fresh generation.
 
-`GET` is a read-only operation and does not generate a WAL record.
+`GET` checks the active MemTable first, followed by SSTables from newest to oldest. Tombstones ensure that deleted values are not resurrected from older SSTables.
 
 ### Write-Ahead Log
 
 The WAL is the durable history of database mutations.
 
-RookDB v1 uses the following record format:
+RookDB v2 retains the following record format:
 
 ```text
 ┌───────────────┬───────────────┬───────────────┐
@@ -269,30 +290,28 @@ RookDB v1 uses the following record format:
 - CRC32 covers the length and payload.
 - The WAL is synchronized before a successful write is returned.
 
-During startup, RookDB sequentially scans the WAL and reconstructs the in-memory state.
+During startup, RookDB discovers existing WAL generations and SSTables, validates them, and replays unreconciled WAL records to reconstruct the current state.
 
-If the WAL ends with an incomplete or corrupted record, RookDB truncates the invalid tail and stops recovery at that point.
+### MemTable and SSTables
 
-### In-Memory State
+The MemTable is an in-memory, skip-list-based structure that maintains the latest state of a generation.
 
-The current state of the database is maintained in memory as a Go map.
+When frozen, its contents are written in sorted order to an immutable SSTable.
 
-Conceptually:
+SSTables use:
 
-```text
-WAL = durable history
-Map = current materialized state
-```
+- Data blocks with CRC32 integrity checks.
+- Sparse indexes for locating data blocks.
+- Bloom filters to avoid unnecessary disk reads.
+- Tombstones to preserve deletion semantics across storage generations.
 
-The map can be reconstructed from the WAL, which allows the database to recover its state after restarting.
+The WAL is reclaimed only after the corresponding SSTable has been successfully published.
 
 ---
 
 ## Failure Model
 
-RookDB v1 explicitly considers failures that can occur during a write.
-
-The important ordering is:
+RookDB v2 maintains the same durability ordering for mutations:
 
 ```text
 Client request
@@ -304,17 +323,15 @@ Write WAL
 Sync WAL
       │
       ▼
-Update memory
+Update MemTable
       │
       ▼
 Return success
 ```
 
-This avoids acknowledging a write before its durable WAL record exists.
+The WAL remains the source of truth for unflushed mutations. Once a generation is successfully flushed and its SSTable published, the corresponding WAL can be reclaimed.
 
-During recovery, RookDB treats the WAL as the source of truth for mutations.
-
-A structurally invalid WAL record is not skipped. Recovery stops at the invalid record and truncates the WAL from that point, preventing potentially unsafe later records from being replayed.
+Incomplete or corrupted WAL tails are detected during recovery and truncated. Invalid SSTables cause startup to fail rather than silently falling back to potentially stale data.
 
 More detailed design reasoning and invariants are documented in:
 
@@ -322,31 +339,26 @@ More detailed design reasoning and invariants are documented in:
 docs/design.md
 ```
 
----
-
 ## Project Structure
 
 ```text
 rookdb/
 ├── cmd/
 │   └── rookdb/
-│       └── main.go
+│       └── main.go         -- Exposes CLI to talk to DB
 │
 ├── internal/
-│   ├── operation/
-│   │   └── operation.go
-│   │
-│   ├── wal/
-│   │   └── wal.go
-│   │
-│   ├── engine/
-│   │   └── engine.go
-│   │
-│   └── parser/
-│       └── parser.go
+│   ├── operation/          -- Defines a rookdb operation
+│   ├── wal/                -- Defines implementation of wal
+│   ├── engine/             -- Connects all components in one
+│   └── parser/             -- Helps in CLI parsing
+│   └── memtable/           -- Skip list based memtable implementation
+│   └── sstable/            -- Contain SSTable internals (blocks, reader, writer, bloom filter, etc)
 │
 ├── docs/
-│   └── design.md
+│   └── changelog/          -- Old version README's
+│   └── design/             -- Internal design docs
+│   └── design.md           -- Links all design docs
 │
 ├── go.mod
 └── README.md
@@ -382,35 +394,13 @@ RookDB is being built one layer at a time, with the design decisions and tradeof
 
 ---
 
-## Design Documentation
-
-The implementation is accompanied by a design document containing the reasoning behind major architectural decisions, including:
-
-- WAL format
-- Durability semantics
-- Recovery behavior
-- Record validation
-- Corruption handling
-- Truncation strategy
-- Component responsibilities
-- Failure assumptions
-- Design tradeoffs
-
-See:
-
-```text
-docs/design.md
-```
-
----
-
 ## License
 
 Rook DB is licensed under Apache 2.0
 
 ## Performance Baseline
 
-RookDB v1.0 was benchmarked before beginning the LSM-based storage engine work.
+RookDB v2.0 was benchmarked after v2.0 was completed to accept SET, GET and DELETE commands.
 
 The benchmarks measure the core `Engine` directly rather than going through the CLI, avoiding terminal I/O and command parsing overhead.
 
@@ -429,12 +419,13 @@ go test ./internal/engine -bench=. -benchmem
 ### Results
 
 ```
-Operation	  Time	            Memory	      Allocations
-
-SET         ~2.15 µs/op	        229 B/op	  5 allocs/op
-GET	        ~16.8 ns/op	         0 B/op	      0 allocs/op
-DELETE	    ~2.07 µs/delete	    194 B/op	  5 allocs/op
+Operation       v1                  v2        Regression
+SET            2,147ns/op	    2,500ns/op      16.4%
+GET	           16.8 ns/op	    178.4 ns/op	    10.62×
+DELETE	       2,070 ns/op	    2,394 ns/op	    15.7%
 ```
+
+The drop in performance can be due to new advance data structures and also no optimizations.
 
 #### Workloads
 
