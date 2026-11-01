@@ -18,7 +18,7 @@ The WAL receives a path from the storage layer, which owns the overall data dire
 CRC32(LENGTH + PAYLOAD)
 ```
 
-Including the length detects corruption in the field that controls record framing. The current implementation limits the complete physical record to 512 bytes.
+Including the length detects corruption in the field that controls record framing. The current implementation limits the complete physical record to 4 kilo-bytes.
 
 ## Append and durability
 
