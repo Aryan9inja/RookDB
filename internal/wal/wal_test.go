@@ -119,8 +119,8 @@ func TestWAL(t *testing.T) {
 
 		wal, path := newTestWAL(t)
 
-		// 513 bytes > MaxRecordSize
-		excessiveLength := []byte{0x00, 0x00, 0x02, 0x01}
+		// 4097 bytes > MaxRecordSize
+		excessiveLength := []byte{0x00, 0x00, 0x10, 0x01}
 		writeRawWAL(t, path, excessiveLength)
 
 		wal2 := reopenTestWAL(t, wal, path)
