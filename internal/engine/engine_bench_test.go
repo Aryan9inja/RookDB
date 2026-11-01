@@ -2,15 +2,13 @@ package engine
 
 import (
 	"fmt"
-	"path/filepath"
 	"testing"
 )
 
 func BenchmarkEngineSet(b *testing.B) {
 	dir := b.TempDir()
-	path := filepath.Join(dir, "bench.wal")
 
-	engine, err := NewEngine(path)
+	engine, err := NewEngine(dir)
 	if err != nil {
 		b.Fatalf("benchmark set: engine init failed: %v", err)
 	}
@@ -37,9 +35,8 @@ func BenchmarkEngineSet(b *testing.B) {
 
 func BenchmarkEngineGet(b *testing.B) {
 	dir := b.TempDir()
-	path := filepath.Join(dir, "bench.wal")
 
-	engine, err := NewEngine(path)
+	engine, err := NewEngine(dir)
 	if err != nil {
 		b.Fatalf("benchmark set: engine init failed: %v", err)
 	}
@@ -68,9 +65,8 @@ func BenchmarkEngineGet(b *testing.B) {
 
 func BenchmarkEngineDelete(b *testing.B) {
 	dir := b.TempDir()
-	path := filepath.Join(dir, "bench.wal")
 
-	engine, err := NewEngine(path)
+	engine, err := NewEngine(dir)
 	if err != nil {
 		b.Fatalf("benchmark delete: engine init failed: %v", err)
 	}
